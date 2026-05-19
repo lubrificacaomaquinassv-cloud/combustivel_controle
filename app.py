@@ -411,8 +411,8 @@ elif pagina == "🏪 Consumo Posto":
             st.info("Nenhum abastecimento registrado hoje.")
         else:
             c1, c2, c3 = st.columns(3)
-            c1.metric("Total Diesel",   fmt_l(df_hoje[df_hoje["combustivel"].str.contains("DIESEL", na=False)]["litros_consumidos"].sum()))
-            c2.metric("Total Gasolina", fmt_l(df_hoje[df_hoje["combustivel"] == "GASOLINA COMUM"]["litros_consumidos"].sum()))
+            c1.metric("Total Diesel",   fmt_l(df_hoje[df_hoje["combustivel"].str.contains("diesel", case=False, na=False)]["litros_consumidos"].sum()))
+            c2.metric("Total Gasolina", fmt_l(df_hoje[df_hoje["combustivel"].str.contains("gasolina", case=False, na=False)]["litros_consumidos"].sum()))
             c3.metric("Frotas",         df_hoje["frota"].nunique())
 
             st.dataframe(
@@ -447,8 +447,8 @@ elif pagina == "🏪 Consumo Posto":
     df = carregar_consumo_posto(f_ini, f_fim, f_comb)
     if not df.empty:
         m1, m2, m3 = st.columns(3)
-        m1.metric("Total Diesel",   fmt_l(df[df["combustivel"].str.contains("DIESEL", na=False)]["litros_consumidos"].sum()))
-        m2.metric("Total Gasolina", fmt_l(df[df["combustivel"] == "GASOLINA COMUM"]["litros_consumidos"].sum()))
+        m1.metric("Total Diesel",   fmt_l(df[df["combustivel"].str.contains("diesel", case=False, na=False)]["litros_consumidos"].sum()))
+        m2.metric("Total Gasolina", fmt_l(df[df["combustivel"].str.contains("gasolina", case=False, na=False)]["litros_consumidos"].sum()))
         m3.metric("Registros",      len(df))
 
         st.dataframe(
