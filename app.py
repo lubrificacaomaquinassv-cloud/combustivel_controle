@@ -152,7 +152,9 @@ def carregar_consumo_posto(data_ini=None, data_fim=None, combustivel=None):
     conn = get_conn()
     query = """
         SELECT DATE(created_at) AS data, vehicle AS frota,
-               fuel_type AS combustivel, SUM(liters) AS litros_consumidos
+               fuel_type AS combustivel,
+               COALESCE(operator, '') AS operador,
+               SUM(liters) AS litros_consumidos
         FROM posto WHERE 1=1
     """
     params = []
@@ -162,7 +164,23 @@ def carregar_consumo_posto(data_ini=None, data_fim=None, combustivel=None):
         query += " AND DATE(created_at) <= %s"; params.append(str(data_fim))
     if combustivel and combustivel != "Todos":
         query += " AND fuel_type = %s"; params.append(combustivel)
-    query += " GROUP BY DATE(created_at), vehicle, fuel_type ORDER BY data DESC"
+    query += " GROUP BY DATE(created_at), vehicle, fuel_type, operator ORDER BY data DESC"
+    df = pd.read_sql_query(query, conn, params=params)
+    conn.close()
+    return df
+
+
+def carregar_historico_posto(data_ini=None, data_fim=None):
+    conn = get_conn()
+    query = """SELECT data, veiculo AS frota, combustivel,
+               litros AS litros_consumidos, observacao
+               FROM combustivel_historico_posto WHERE 1=1"""
+    params = []
+    if data_ini:
+        query += " AND data >= %s"; params.append(str(data_ini))
+    if data_fim:
+        query += " AND data <= %s"; params.append(str(data_fim))
+    query += " ORDER BY data DESC"
     df = pd.read_sql_query(query, conn, params=params)
     conn.close()
     return df
@@ -205,6 +223,7 @@ pagina = st.sidebar.radio("Menu", [
     "🏪 Consumo Posto",
     "📋 Histórico Entradas",
     "📋 Histórico Transferências",
+    "📜 Histórico Planilha Posto",
 ])
 
 # ═══════════════════════════════════════════
@@ -575,3 +594,46 @@ elif pagina == "📋 Histórico Transferências":
             deletar_transferencia(sel)
             st.success("Transferência excluída.")
             st.rerun()
+
+# ═══════════════════════════════════════════
+# HISTÓRICO PLANILHA POSTO
+# ═══════════════════════════════════════════
+elif pagina == "📜 Histórico Planilha Posto":
+    st.title("📜 Histórico Posto — Importado da Planilha")
+    st.divider()
+    st.info("Saídas históricas importadas da planilha (Jan/2025 – Mai/2026)")
+
+    with st.expander("🔍 Filtros", expanded=True):
+        c1, c2 = st.columns(2)
+        with c1: f_ini = st.date_input("Data início", value=None)
+        with c2: f_fim = st.date_input("Data fim",    value=None)
+
+    df = carregar_historico_posto(f_ini, f_fim)
+    if df.empty:
+        st.info("Nenhum registro encontrado.")
+    else:
+        m1, m2 = st.columns(2)
+        m1.metric("Total Registros", len(df))
+        m2.metric("Total Litros",    fmt_l(df["litros_consumidos"].sum()))
+
+        st.dataframe(
+            df.rename(columns={"data": "Data", "frota": "Veículo",
+                                "combustivel": "Combustível",
+                                "litros_consumidos": "Litros",
+                                "observacao": "Observação"}),
+            use_container_width=True, hide_index=True,
+        )
+
+        st.subheader("🚜 Consumo por Veículo (Top 15)")
+        por_veiculo = df.groupby("frota")["litros_consumidos"].sum().reset_index().sort_values("litros_consumidos", ascending=False).head(15)
+        st.bar_chart(por_veiculo.set_index("frota"))
+
+        excel = gerar_excel(df.rename(columns={
+            "data": "Data", "frota": "Veículo",
+            "combustivel": "Combustível",
+            "litros_consumidos": "Litros (L)",
+            "observacao": "Observação"
+        }))
+        st.download_button("⬇️ Exportar Excel", data=excel,
+            file_name=f"historico_posto_{date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
