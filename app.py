@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────
-# CONEXÃO SUPABASE
+# CONEXÃO
 # ─────────────────────────────────────────────
 def get_conn():
     return psycopg2.connect(
@@ -26,7 +26,14 @@ def get_conn():
     )
 
 # ─────────────────────────────────────────────
-# CRUD
+# COMBUSTÍVEIS E ORIGENS
+# ─────────────────────────────────────────────
+COMBUSTIVEIS_COMBOIO = ["DIESEL S-500 ADITIVADO"]
+COMBUSTIVEIS_POSTO   = ["DIESEL S-500 ADITIVADO", "GASOLINA COMUM", "ETANOL COMUM"]
+TODOS_COMBUSTIVEIS   = ["DIESEL S-500 ADITIVADO", "GASOLINA COMUM", "ETANOL COMUM"]
+
+# ─────────────────────────────────────────────
+# CRUD — ENTRADAS
 # ─────────────────────────────────────────────
 def inserir_entrada(row: dict):
     try:
@@ -52,65 +59,14 @@ def carregar_entradas(data_ini=None, data_fim=None, combustivel=None, origem=Non
     query = "SELECT * FROM combustivel_entrada WHERE 1=1"
     params = []
     if data_ini:
-        query += " AND data >= %s"
-        params.append(str(data_ini))
+        query += " AND data >= %s"; params.append(str(data_ini))
     if data_fim:
-        query += " AND data <= %s"
-        params.append(str(data_fim))
+        query += " AND data <= %s"; params.append(str(data_fim))
     if combustivel and combustivel != "Todos":
-        query += " AND combustivel = %s"
-        params.append(combustivel)
+        query += " AND combustivel = %s"; params.append(combustivel)
     if origem and origem != "Todos":
-        query += " AND origem = %s"
-        params.append(origem)
+        query += " AND origem = %s"; params.append(origem)
     query += " ORDER BY data DESC, id DESC"
-    df = pd.read_sql_query(query, conn, params=params)
-    conn.close()
-    return df
-
-
-def carregar_saldo_geral():
-    conn = get_conn()
-    df = pd.read_sql_query("SELECT * FROM vw_saldo_combustivel_geral", conn)
-    conn.close()
-    return df
-
-
-def carregar_consumo_comboio(data_ini=None, data_fim=None):
-    conn = get_conn()
-    query = "SELECT * FROM vw_consumo_diario_comboio WHERE 1=1"
-    params = []
-    if data_ini:
-        query += " AND data >= %s"
-        params.append(str(data_ini))
-    if data_fim:
-        query += " AND data <= %s"
-        params.append(str(data_fim))
-    query += " ORDER BY data DESC"
-    df = pd.read_sql_query(query, conn, params=params)
-    conn.close()
-    return df
-
-
-def carregar_consumo_posto(data_ini=None, data_fim=None):
-    conn = get_conn()
-    query = """
-        SELECT
-            DATE(created_at)  AS data,
-            vehicle           AS frota,
-            fuel_type         AS combustivel,
-            SUM(liters)       AS litros_consumidos
-        FROM posto
-        WHERE 1=1
-    """
-    params = []
-    if data_ini:
-        query += " AND DATE(created_at) >= %s"
-        params.append(str(data_ini))
-    if data_fim:
-        query += " AND DATE(created_at) <= %s"
-        params.append(str(data_fim))
-    query += " GROUP BY DATE(created_at), vehicle, fuel_type ORDER BY data DESC"
     df = pd.read_sql_query(query, conn, params=params)
     conn.close()
     return df
@@ -124,32 +80,126 @@ def deletar_entrada(eid: int):
     cur.close()
     conn.close()
 
+# ─────────────────────────────────────────────
+# CRUD — TRANSFERÊNCIAS
+# ─────────────────────────────────────────────
+def inserir_transferencia(row: dict):
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO combustivel_transferencia
+              (data, combustivel, origem, destino, quantidade_l, observacao)
+            VALUES (%(data)s, %(combustivel)s, %(origem)s, %(destino)s,
+                    %(quantidade_l)s, %(observacao)s)
+        """, row)
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True, "Transferência registrada com sucesso!"
+    except Exception as e:
+        return False, str(e)
+
+
+def carregar_transferencias(data_ini=None, data_fim=None):
+    conn = get_conn()
+    query = "SELECT * FROM combustivel_transferencia WHERE 1=1"
+    params = []
+    if data_ini:
+        query += " AND data >= %s"; params.append(str(data_ini))
+    if data_fim:
+        query += " AND data <= %s"; params.append(str(data_fim))
+    query += " ORDER BY data DESC, id DESC"
+    df = pd.read_sql_query(query, conn, params=params)
+    conn.close()
+    return df
+
+
+def deletar_transferencia(tid: int):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM combustivel_transferencia WHERE id = %s", (tid,))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+# ─────────────────────────────────────────────
+# CONSULTAS — SALDO E CONSUMO
+# ─────────────────────────────────────────────
+def carregar_saldo_geral():
+    conn = get_conn()
+    df = pd.read_sql_query("SELECT * FROM vw_saldo_combustivel_geral", conn)
+    conn.close()
+    return df
+
+
+def carregar_consumo_comboio(data_ini=None, data_fim=None):
+    conn = get_conn()
+    query = "SELECT * FROM vw_consumo_diario_comboio WHERE 1=1"
+    params = []
+    if data_ini:
+        query += " AND data >= %s"; params.append(str(data_ini))
+    if data_fim:
+        query += " AND data <= %s"; params.append(str(data_fim))
+    query += " ORDER BY data DESC"
+    df = pd.read_sql_query(query, conn, params=params)
+    conn.close()
+    return df
+
+
+def carregar_consumo_posto(data_ini=None, data_fim=None, combustivel=None):
+    conn = get_conn()
+    query = """
+        SELECT DATE(created_at) AS data, vehicle AS frota,
+               fuel_type AS combustivel, SUM(liters) AS litros_consumidos
+        FROM posto WHERE 1=1
+    """
+    params = []
+    if data_ini:
+        query += " AND DATE(created_at) >= %s"; params.append(str(data_ini))
+    if data_fim:
+        query += " AND DATE(created_at) <= %s"; params.append(str(data_fim))
+    if combustivel and combustivel != "Todos":
+        query += " AND fuel_type = %s"; params.append(combustivel)
+    query += " GROUP BY DATE(created_at), vehicle, fuel_type ORDER BY data DESC"
+    df = pd.read_sql_query(query, conn, params=params)
+    conn.close()
+    return df
 
 # ─────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────
-def fmt_litros(v):
+def fmt_l(v):
     try:
         return f"{v:,.2f} L".replace(",", "X").replace(".", ",").replace("X", ".")
     except:
         return "0,00 L"
 
-def fmt_moeda(v):
+def fmt_r(v):
     try:
         return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except:
         return "R$ 0,00"
+
+def alerta(saldo):
+    if saldo > 500:  return "🟢"
+    if saldo > 200:  return "🟡"
+    return "🔴"
 
 # ─────────────────────────────────────────────
 # SIDEBAR
 # ─────────────────────────────────────────────
 st.sidebar.image("https://img.icons8.com/color/96/gas-station.png", width=80)
 st.sidebar.title("Controle de Combustível")
-pagina = st.sidebar.radio(
-    "Menu",
-    ["📊 Saldo Geral", "⛽ Lançar Entrada", "🚛 Consumo Comboio",
-     "🏪 Consumo Posto", "📋 Histórico Entradas"],
-)
+pagina = st.sidebar.radio("Menu", [
+    "📊 Saldo Geral",
+    "⛽ Lançar Entrada",
+    "🔄 Transferência",
+    "🚛 Consumo Comboio",
+    "🏪 Consumo Posto",
+    "📋 Histórico Entradas",
+    "📋 Histórico Transferências",
+])
 
 # ═══════════════════════════════════════════
 # SALDO GERAL
@@ -159,28 +209,23 @@ if pagina == "📊 Saldo Geral":
     st.divider()
 
     df = carregar_saldo_geral()
-
     if df.empty:
-        st.info("Nenhum dado encontrado. Lance entradas para calcular o saldo.")
+        st.info("Lance entradas para calcular o saldo.")
     else:
         for _, row in df.iterrows():
-            origem     = row["origem"]
-            comb       = row["combustivel"]
-            entrada    = float(row["total_entrada_l"] or 0)
-            saida      = float(row["total_saida_l"] or 0)
-            saldo      = float(row["saldo_litros"] or 0)
-
-            cor = "🟢" if saldo > 500 else "🟡" if saldo > 200 else "🔴"
-
+            origem  = row["origem"]
+            comb    = row["combustivel"]
+            entrada = float(row["total_entrada_l"] or 0)
+            saida   = float(row["total_saida_l"]   or 0)
+            saldo   = float(row["saldo_litros"]     or 0)
             with st.container(border=True):
-                st.markdown(f"### {cor} {origem} — {comb}")
+                st.markdown(f"### {alerta(saldo)} {origem} — {comb}")
                 c1, c2, c3 = st.columns(3)
-                c1.metric("Total Entrada", fmt_litros(entrada))
-                c2.metric("Total Saída",   fmt_litros(saida))
-                c3.metric("Saldo Atual",   fmt_litros(saldo),
+                c1.metric("Total Entrada", fmt_l(entrada))
+                c2.metric("Total Saída",   fmt_l(saida))
+                c3.metric("Saldo Atual",   fmt_l(saldo),
                           delta=f"{saldo:+.0f} L".replace(".", ","))
 
-    st.divider()
     st.caption(f"Atualizado em: {date.today().strftime('%d/%m/%Y')}")
 
 # ═══════════════════════════════════════════
@@ -192,28 +237,27 @@ elif pagina == "⛽ Lançar Entrada":
 
     with st.form("form_entrada", clear_on_submit=True):
         col1, col2 = st.columns(2)
-
         with col1:
-            data_ent    = st.date_input("📅 Data", value=date.today())
-            combustivel = st.selectbox("⛽ Combustível", ["DIESEL", "GASOLINA"])
-            origem      = st.selectbox("📍 Destino", ["COMBOIO", "POSTO"])
-            quantidade  = st.number_input("💧 Quantidade (litros)", min_value=0.0, step=0.01, format="%.2f")
-
+            data_ent   = st.date_input("📅 Data", value=date.today())
+            origem     = st.selectbox("📍 Destino", ["COMBOIO", "POSTO"])
+            if origem == "COMBOIO":
+                combustivel = st.selectbox("⛽ Combustível", COMBUSTIVEIS_COMBOIO)
+            else:
+                combustivel = st.selectbox("⛽ Combustível", COMBUSTIVEIS_POSTO)
+            quantidade = st.number_input("💧 Quantidade (litros)", min_value=0.0, step=0.01, format="%.2f")
         with col2:
-            valor_litro  = st.number_input("💰 Valor por Litro (R$)", min_value=0.0, step=0.001, format="%.4f")
+            valor_litro = st.number_input("💰 Valor por Litro (R$)", min_value=0.0, step=0.001, format="%.4f")
             if quantidade > 0 and valor_litro > 0:
-                st.metric("💵 Valor Total", fmt_moeda(quantidade * valor_litro))
-            fornecedor   = st.text_input("🏢 Fornecedor")
-            nota_fiscal  = st.text_input("📄 Nota Fiscal")
-
+                st.metric("💵 Valor Total", fmt_r(quantidade * valor_litro))
+            fornecedor  = st.text_input("🏢 Fornecedor")
+            nota_fiscal = st.text_input("📄 Nota Fiscal")
         observacao = st.text_area("📝 Observação", height=60)
-
-        submitted = st.form_submit_button("✅ Registrar Entrada", use_container_width=True, type="primary")
+        submitted  = st.form_submit_button("✅ Registrar Entrada", use_container_width=True, type="primary")
 
     if submitted:
         if quantidade <= 0:
             st.error("⚠️ Informe a quantidade de litros.")
-        elif valor_litro <= 0:
+        elif valor_litro < 0:
             st.error("⚠️ Informe o valor por litro.")
         else:
             ok, msg = inserir_entrada({
@@ -233,10 +277,57 @@ elif pagina == "⛽ Lançar Entrada":
                 st.error(f"❌ {msg}")
 
 # ═══════════════════════════════════════════
+# TRANSFERÊNCIA
+# ═══════════════════════════════════════════
+elif pagina == "🔄 Transferência":
+    st.title("🔄 Transferência de Combustível")
+    st.divider()
+
+    st.info("Use esta tela para registrar movimentação entre POSTO e COMBOIO em qualquer direção.")
+
+    with st.form("form_transf", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            data_t    = st.date_input("📅 Data", value=date.today())
+            origem_t  = st.selectbox("📤 Origem", ["POSTO", "COMBOIO"])
+            destino_t = st.selectbox("📥 Destino",
+                ["COMBOIO" if origem_t == "POSTO" else "POSTO",
+                 "POSTO"   if origem_t == "POSTO" else "COMBOIO"])
+        with col2:
+            if origem_t == "COMBOIO":
+                comb_t = st.selectbox("⛽ Combustível", COMBUSTIVEIS_COMBOIO)
+            else:
+                comb_t = st.selectbox("⛽ Combustível", COMBUSTIVEIS_POSTO)
+            qtd_t = st.number_input("💧 Quantidade (litros)", min_value=0.0, step=0.01, format="%.2f")
+
+        obs_t    = st.text_area("📝 Observação", height=60)
+        submitted = st.form_submit_button("✅ Registrar Transferência", use_container_width=True, type="primary")
+
+    if submitted:
+        if origem_t == destino_t:
+            st.error("⚠️ Origem e destino não podem ser iguais.")
+        elif qtd_t <= 0:
+            st.error("⚠️ Informe a quantidade de litros.")
+        else:
+            ok, msg = inserir_transferencia({
+                "data":        str(data_t),
+                "combustivel": comb_t,
+                "origem":      origem_t,
+                "destino":     destino_t,
+                "quantidade_l": qtd_t,
+                "observacao":  obs_t.strip() or None,
+            })
+            if ok:
+                st.success(f"✅ {msg} | {fmt_l(qtd_t)} de {origem_t} → {destino_t}")
+                st.balloons()
+            else:
+                st.error(f"❌ {msg}")
+
+# ═══════════════════════════════════════════
 # CONSUMO COMBOIO
 # ═══════════════════════════════════════════
 elif pagina == "🚛 Consumo Comboio":
-    st.title("🚛 Consumo Diário — Comboio (Diesel)")
+    st.title("🚛 Consumo Diário — Comboio")
     st.divider()
 
     with st.expander("🔍 Filtros", expanded=True):
@@ -245,31 +336,24 @@ elif pagina == "🚛 Consumo Comboio":
         with c2: f_fim = st.date_input("Data fim",    value=None)
 
     df = carregar_consumo_comboio(f_ini, f_fim)
-
     if df.empty:
         st.info("Nenhum consumo encontrado.")
     else:
-        total = df["litros_consumidos"].sum()
         m1, m2 = st.columns(2)
-        m1.metric("Total Litros Consumidos", fmt_litros(total))
-        m2.metric("Registros",               len(df))
+        m1.metric("Total Litros", fmt_l(df["litros_consumidos"].sum()))
+        m2.metric("Registros",    len(df))
 
         st.dataframe(
-            df.rename(columns={
-                "data": "Data", "frota": "Frota",
-                "litros_consumidos": "Litros",
-            }),
-            use_container_width=True,
-            hide_index=True,
+            df.rename(columns={"data": "Data", "frota": "Frota",
+                                "litros_consumidos": "Litros"}),
+            use_container_width=True, hide_index=True,
         )
 
-        # Gráfico por frota
-        st.subheader("🚛 Consumo Total por Frota")
+        st.subheader("🚛 Consumo por Frota")
         por_frota = df.groupby("frota")["litros_consumidos"].sum().reset_index().sort_values("litros_consumidos", ascending=False)
         st.bar_chart(por_frota.set_index("frota"))
 
-        # Gráfico por dia
-        st.subheader("📅 Consumo Diário Total")
+        st.subheader("📅 Consumo Diário")
         por_dia = df.groupby("data")["litros_consumidos"].sum().reset_index()
         st.line_chart(por_dia.set_index("data"))
 
@@ -284,35 +368,28 @@ elif pagina == "🏪 Consumo Posto":
         c1, c2, c3 = st.columns(3)
         with c1: f_ini  = st.date_input("Data início", value=None)
         with c2: f_fim  = st.date_input("Data fim",    value=None)
-        with c3: f_comb = st.selectbox("Combustível",  ["Todos", "DIESEL", "GASOLINA"])
+        with c3: f_comb = st.selectbox("Combustível", ["Todos"] + TODOS_COMBUSTIVEIS)
 
-    df = carregar_consumo_posto(f_ini, f_fim)
-    if f_comb != "Todos":
-        df = df[df["combustivel"] == f_comb]
-
+    df = carregar_consumo_posto(f_ini, f_fim, f_comb)
     if df.empty:
         st.info("Nenhum consumo encontrado.")
     else:
-        total_diesel   = df[df["combustivel"] == "DIESEL"]["litros_consumidos"].sum()
-        total_gasolina = df[df["combustivel"] == "GASOLINA"]["litros_consumidos"].sum()
         m1, m2, m3 = st.columns(3)
-        m1.metric("Total Diesel",   fmt_litros(total_diesel))
-        m2.metric("Total Gasolina", fmt_litros(total_gasolina))
+        m1.metric("Total Diesel",   fmt_l(df[df["combustivel"].str.contains("DIESEL", na=False)]["litros_consumidos"].sum()))
+        m2.metric("Total Gasolina", fmt_l(df[df["combustivel"] == "GASOLINA COMUM"]["litros_consumidos"].sum()))
         m3.metric("Registros",      len(df))
 
         st.dataframe(
-            df.rename(columns={
-                "data": "Data", "frota": "Frota",
-                "combustivel": "Combustível",
-                "litros_consumidos": "Litros",
-            }),
-            use_container_width=True,
-            hide_index=True,
+            df.rename(columns={"data": "Data", "frota": "Frota",
+                                "combustivel": "Combustível",
+                                "litros_consumidos": "Litros"}),
+            use_container_width=True, hide_index=True,
         )
 
         st.subheader("🏪 Consumo por Frota")
         por_frota = df.groupby(["frota", "combustivel"])["litros_consumidos"].sum().reset_index()
-        st.bar_chart(por_frota.pivot(index="frota", columns="combustivel", values="litros_consumidos").fillna(0))
+        pivot = por_frota.pivot(index="frota", columns="combustivel", values="litros_consumidos").fillna(0)
+        st.bar_chart(pivot)
 
 # ═══════════════════════════════════════════
 # HISTÓRICO ENTRADAS
@@ -323,57 +400,96 @@ elif pagina == "📋 Histórico Entradas":
 
     with st.expander("🔍 Filtros", expanded=True):
         c1, c2, c3, c4 = st.columns(4)
-        with c1: f_ini  = st.date_input("Data início",  value=None)
-        with c2: f_fim  = st.date_input("Data fim",     value=None)
-        with c3: f_comb = st.selectbox("Combustível",   ["Todos", "DIESEL", "GASOLINA"])
-        with c4: f_orig = st.selectbox("Origem",        ["Todos", "COMBOIO", "POSTO"])
+        with c1: f_ini  = st.date_input("Data início", value=None)
+        with c2: f_fim  = st.date_input("Data fim",    value=None)
+        with c3: f_comb = st.selectbox("Combustível",  ["Todos"] + TODOS_COMBUSTIVEIS)
+        with c4: f_orig = st.selectbox("Origem",       ["Todos", "COMBOIO", "POSTO"])
 
     df = carregar_entradas(f_ini, f_fim,
                            f_comb if f_comb != "Todos" else None,
                            f_orig if f_orig != "Todos" else None)
-
     if df.empty:
         st.info("Nenhuma entrada encontrada.")
     else:
         m1, m2, m3 = st.columns(3)
-        m1.metric("Total Entradas",  len(df))
-        m2.metric("Total Litros",    fmt_litros(df["quantidade_l"].sum()))
-        m3.metric("Valor Total",     fmt_moeda(df["valor_total"].sum()))
+        m1.metric("Total Entradas", len(df))
+        m2.metric("Total Litros",   fmt_l(df["quantidade_l"].sum()))
+        m3.metric("Valor Total",    fmt_r(df["valor_total"].sum()))
 
         df_show = df.copy()
-        df_show["quantidade_l"] = df_show["quantidade_l"].apply(fmt_litros)
+        df_show["quantidade_l"] = df_show["quantidade_l"].apply(fmt_l)
         df_show["valor_litro"]  = df_show["valor_litro"].apply(lambda v: f"R$ {v:.4f}")
-        df_show["valor_total"]  = df_show["valor_total"].apply(fmt_moeda)
+        df_show["valor_total"]  = df_show["valor_total"].apply(fmt_r)
         df_show = df_show.rename(columns={
             "id": "ID", "data": "Data", "combustivel": "Combustível",
-            "origem": "Origem", "quantidade_l": "Qtd Litros",
-            "valor_litro": "R$/Litro", "valor_total": "Total",
+            "origem": "Origem", "quantidade_l": "Litros",
+            "valor_litro": "R$/L", "valor_total": "Total",
             "fornecedor": "Fornecedor", "nota_fiscal": "NF",
             "observacao": "Observação",
         })
         st.dataframe(
-            df_show[["ID", "Data", "Combustível", "Origem", "Qtd Litros",
-                      "R$/Litro", "Total", "Fornecedor", "NF", "Observação"]],
-            use_container_width=True,
-            hide_index=True,
+            df_show[["ID", "Data", "Combustível", "Origem", "Litros",
+                      "R$/L", "Total", "Fornecedor", "NF", "Observação"]],
+            use_container_width=True, hide_index=True,
         )
 
-        # Excluir
         st.divider()
         st.subheader("🗑️ Excluir Entrada")
         ids = df["id"].tolist()
-        sel = st.selectbox("Selecione o ID para excluir", ids)
-        if st.button("🗑️ Excluir", type="primary"):
+        sel = st.selectbox("Selecione o ID", ids)
+        reg = df[df["id"] == sel].iloc[0]
+        st.caption(f"Data: {reg['data']} | {reg['combustivel']} | {reg['origem']} | {fmt_l(reg['quantidade_l'])}")
+        if st.button("🗑️ Confirmar Exclusão", type="primary"):
             deletar_entrada(sel)
             st.success("Entrada excluída.")
             st.rerun()
 
-        # Export
         df.to_excel("/tmp/combustivel_entradas.xlsx", index=False)
         with open("/tmp/combustivel_entradas.xlsx", "rb") as f:
-            st.download_button(
-                "⬇️ Exportar Excel",
-                data=f,
-                file_name=f"combustivel_entradas_{date.today()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
+            st.download_button("⬇️ Exportar Excel", data=f,
+                file_name=f"entradas_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+# ═══════════════════════════════════════════
+# HISTÓRICO TRANSFERÊNCIAS
+# ═══════════════════════════════════════════
+elif pagina == "📋 Histórico Transferências":
+    st.title("📋 Histórico de Transferências")
+    st.divider()
+
+    with st.expander("🔍 Filtros", expanded=True):
+        c1, c2 = st.columns(2)
+        with c1: f_ini = st.date_input("Data início", value=None)
+        with c2: f_fim = st.date_input("Data fim",    value=None)
+
+    df = carregar_transferencias(f_ini, f_fim)
+    if df.empty:
+        st.info("Nenhuma transferência encontrada.")
+    else:
+        m1, m2 = st.columns(2)
+        m1.metric("Total Transferências", len(df))
+        m2.metric("Total Litros",         fmt_l(df["quantidade_l"].sum()))
+
+        df_show = df.copy()
+        df_show["quantidade_l"] = df_show["quantidade_l"].apply(fmt_l)
+        df_show = df_show.rename(columns={
+            "id": "ID", "data": "Data", "combustivel": "Combustível",
+            "origem": "Origem", "destino": "Destino",
+            "quantidade_l": "Litros", "observacao": "Observação",
+        })
+        st.dataframe(
+            df_show[["ID", "Data", "Combustível", "Origem", "Destino",
+                      "Litros", "Observação"]],
+            use_container_width=True, hide_index=True,
+        )
+
+        st.divider()
+        st.subheader("🗑️ Excluir Transferência")
+        ids = df["id"].tolist()
+        sel = st.selectbox("Selecione o ID", ids)
+        reg = df[df["id"] == sel].iloc[0]
+        st.caption(f"Data: {reg['data']} | {reg['combustivel']} | {reg['origem']} → {reg['destino']} | {fmt_l(reg['quantidade_l'])}")
+        if st.button("🗑️ Confirmar Exclusão", type="primary"):
+            deletar_transferencia(sel)
+            st.success("Transferência excluída.")
+            st.rerun()
