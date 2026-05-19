@@ -2,6 +2,7 @@ import streamlit as st
 import psycopg2
 import pandas as pd
 from datetime import date
+from io import BytesIO
 
 # ─────────────────────────────────────────────
 # CONFIG
@@ -26,7 +27,7 @@ def get_conn():
     )
 
 # ─────────────────────────────────────────────
-# COMBUSTÍVEIS E ORIGENS
+# COMBUSTÍVEIS
 # ─────────────────────────────────────────────
 COMBUSTIVEIS_COMBOIO = ["DIESEL S-500 ADITIVADO"]
 COMBUSTIVEIS_POSTO   = ["DIESEL S-500 ADITIVADO", "GASOLINA COMUM", "ETANOL COMUM"]
@@ -124,7 +125,7 @@ def deletar_transferencia(tid: int):
     conn.close()
 
 # ─────────────────────────────────────────────
-# CONSULTAS — SALDO E CONSUMO
+# CONSULTAS
 # ─────────────────────────────────────────────
 def carregar_saldo_geral():
     conn = get_conn()
@@ -182,9 +183,14 @@ def fmt_r(v):
         return "R$ 0,00"
 
 def alerta(saldo):
-    if saldo > 500:  return "🟢"
-    if saldo > 200:  return "🟡"
+    if saldo > 500: return "🟢"
+    if saldo > 200: return "🟡"
     return "🔴"
+
+def gerar_excel(df: pd.DataFrame) -> bytes:
+    buf = BytesIO()
+    df.to_excel(buf, index=False)
+    return buf.getvalue()
 
 # ─────────────────────────────────────────────
 # SIDEBAR
@@ -257,8 +263,6 @@ elif pagina == "⛽ Lançar Entrada":
     if submitted:
         if quantidade <= 0:
             st.error("⚠️ Informe a quantidade de litros.")
-        elif valor_litro < 0:
-            st.error("⚠️ Informe o valor por litro.")
         else:
             ok, msg = inserir_entrada({
                 "data":         str(data_ent),
@@ -282,40 +286,35 @@ elif pagina == "⛽ Lançar Entrada":
 elif pagina == "🔄 Transferência":
     st.title("🔄 Transferência de Combustível")
     st.divider()
-
-    st.info("Use esta tela para registrar movimentação entre POSTO e COMBOIO em qualquer direção.")
+    st.info("Registre movimentação entre POSTO e COMBOIO em qualquer direção.")
 
     with st.form("form_transf", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
-            data_t    = st.date_input("📅 Data", value=date.today())
-            origem_t  = st.selectbox("📤 Origem", ["POSTO", "COMBOIO"])
-            destino_t = st.selectbox("📥 Destino",
-                ["COMBOIO" if origem_t == "POSTO" else "POSTO",
-                 "POSTO"   if origem_t == "POSTO" else "COMBOIO"])
+            data_t   = st.date_input("📅 Data", value=date.today())
+            origem_t = st.selectbox("📤 Origem",  ["POSTO", "COMBOIO"])
+            destino_t = "COMBOIO" if origem_t == "POSTO" else "POSTO"
+            st.markdown(f"**📥 Destino:** `{destino_t}`")
         with col2:
             if origem_t == "COMBOIO":
                 comb_t = st.selectbox("⛽ Combustível", COMBUSTIVEIS_COMBOIO)
             else:
                 comb_t = st.selectbox("⛽ Combustível", COMBUSTIVEIS_POSTO)
             qtd_t = st.number_input("💧 Quantidade (litros)", min_value=0.0, step=0.01, format="%.2f")
-
         obs_t    = st.text_area("📝 Observação", height=60)
         submitted = st.form_submit_button("✅ Registrar Transferência", use_container_width=True, type="primary")
 
     if submitted:
-        if origem_t == destino_t:
-            st.error("⚠️ Origem e destino não podem ser iguais.")
-        elif qtd_t <= 0:
+        if qtd_t <= 0:
             st.error("⚠️ Informe a quantidade de litros.")
         else:
             ok, msg = inserir_transferencia({
-                "data":        str(data_t),
-                "combustivel": comb_t,
-                "origem":      origem_t,
-                "destino":     destino_t,
+                "data":         str(data_t),
+                "combustivel":  comb_t,
+                "origem":       origem_t,
+                "destino":      destino_t,
                 "quantidade_l": qtd_t,
-                "observacao":  obs_t.strip() or None,
+                "observacao":   obs_t.strip() or None,
             })
             if ok:
                 st.success(f"✅ {msg} | {fmt_l(qtd_t)} de {origem_t} → {destino_t}")
@@ -327,18 +326,48 @@ elif pagina == "🔄 Transferência":
 # CONSUMO COMBOIO
 # ═══════════════════════════════════════════
 elif pagina == "🚛 Consumo Comboio":
-    st.title("🚛 Consumo Diário — Comboio")
+    st.title("🚛 Consumo — Comboio")
     st.divider()
 
-    with st.expander("🔍 Filtros", expanded=True):
+    # ── RELATÓRIO DE HOJE ──────────────────
+    with st.container(border=True):
+        st.markdown("### 📤 Relatório Comboio — Hoje")
+        df_hoje = carregar_consumo_comboio(date.today(), date.today())
+        if df_hoje.empty:
+            st.info("Nenhum abastecimento registrado hoje.")
+        else:
+            total_hoje = df_hoje["litros_consumidos"].sum()
+            c1, c2 = st.columns(2)
+            c1.metric("Total Hoje", fmt_l(total_hoje))
+            c2.metric("Frotas Abastecidas", df_hoje["frota"].nunique())
+            st.dataframe(
+                df_hoje.rename(columns={"data": "Data", "frota": "Frota",
+                                        "litros_consumidos": "Litros"}),
+                use_container_width=True, hide_index=True,
+            )
+            excel_hoje = gerar_excel(df_hoje.rename(columns={
+                "data": "Data", "frota": "Frota", "litros_consumidos": "Litros (L)"
+            }))
+            st.download_button(
+                "⬇️ Baixar Relatório de Hoje — Comboio",
+                data=excel_hoje,
+                file_name=f"relatorio_comboio_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                type="primary",
+            )
+
+    st.divider()
+
+    # ── FILTRO PERSONALIZADO ───────────────
+    st.markdown("### 🔍 Consulta por Período")
+    with st.expander("Filtros", expanded=False):
         c1, c2 = st.columns(2)
         with c1: f_ini = st.date_input("Data início", value=None)
         with c2: f_fim = st.date_input("Data fim",    value=None)
 
     df = carregar_consumo_comboio(f_ini, f_fim)
-    if df.empty:
-        st.info("Nenhum consumo encontrado.")
-    else:
+    if not df.empty:
         m1, m2 = st.columns(2)
         m1.metric("Total Litros", fmt_l(df["litros_consumidos"].sum()))
         m2.metric("Registros",    len(df))
@@ -357,6 +386,16 @@ elif pagina == "🚛 Consumo Comboio":
         por_dia = df.groupby("data")["litros_consumidos"].sum().reset_index()
         st.line_chart(por_dia.set_index("data"))
 
+        excel_per = gerar_excel(df.rename(columns={
+            "data": "Data", "frota": "Frota", "litros_consumidos": "Litros (L)"
+        }))
+        st.download_button(
+            "⬇️ Exportar Período — Comboio",
+            data=excel_per,
+            file_name=f"comboio_{f_ini}_{f_fim}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
 # ═══════════════════════════════════════════
 # CONSUMO POSTO
 # ═══════════════════════════════════════════
@@ -364,16 +403,49 @@ elif pagina == "🏪 Consumo Posto":
     st.title("🏪 Consumo — Posto")
     st.divider()
 
-    with st.expander("🔍 Filtros", expanded=True):
+    # ── RELATÓRIO DE HOJE ──────────────────
+    with st.container(border=True):
+        st.markdown("### 📤 Relatório Posto — Hoje")
+        df_hoje = carregar_consumo_posto(date.today(), date.today())
+        if df_hoje.empty:
+            st.info("Nenhum abastecimento registrado hoje.")
+        else:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total Diesel",   fmt_l(df_hoje[df_hoje["combustivel"].str.contains("DIESEL", na=False)]["litros_consumidos"].sum()))
+            c2.metric("Total Gasolina", fmt_l(df_hoje[df_hoje["combustivel"] == "GASOLINA COMUM"]["litros_consumidos"].sum()))
+            c3.metric("Frotas",         df_hoje["frota"].nunique())
+
+            st.dataframe(
+                df_hoje.rename(columns={"data": "Data", "frota": "Frota",
+                                        "combustivel": "Combustível",
+                                        "litros_consumidos": "Litros"}),
+                use_container_width=True, hide_index=True,
+            )
+            excel_hoje = gerar_excel(df_hoje.rename(columns={
+                "data": "Data", "frota": "Frota",
+                "combustivel": "Combustível", "litros_consumidos": "Litros (L)"
+            }))
+            st.download_button(
+                "⬇️ Baixar Relatório de Hoje — Posto",
+                data=excel_hoje,
+                file_name=f"relatorio_posto_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                type="primary",
+            )
+
+    st.divider()
+
+    # ── FILTRO PERSONALIZADO ───────────────
+    st.markdown("### 🔍 Consulta por Período")
+    with st.expander("Filtros", expanded=False):
         c1, c2, c3 = st.columns(3)
         with c1: f_ini  = st.date_input("Data início", value=None)
         with c2: f_fim  = st.date_input("Data fim",    value=None)
         with c3: f_comb = st.selectbox("Combustível", ["Todos"] + TODOS_COMBUSTIVEIS)
 
     df = carregar_consumo_posto(f_ini, f_fim, f_comb)
-    if df.empty:
-        st.info("Nenhum consumo encontrado.")
-    else:
+    if not df.empty:
         m1, m2, m3 = st.columns(3)
         m1.metric("Total Diesel",   fmt_l(df[df["combustivel"].str.contains("DIESEL", na=False)]["litros_consumidos"].sum()))
         m2.metric("Total Gasolina", fmt_l(df[df["combustivel"] == "GASOLINA COMUM"]["litros_consumidos"].sum()))
@@ -390,6 +462,17 @@ elif pagina == "🏪 Consumo Posto":
         por_frota = df.groupby(["frota", "combustivel"])["litros_consumidos"].sum().reset_index()
         pivot = por_frota.pivot(index="frota", columns="combustivel", values="litros_consumidos").fillna(0)
         st.bar_chart(pivot)
+
+        excel_per = gerar_excel(df.rename(columns={
+            "data": "Data", "frota": "Frota",
+            "combustivel": "Combustível", "litros_consumidos": "Litros (L)"
+        }))
+        st.download_button(
+            "⬇️ Exportar Período — Posto",
+            data=excel_per,
+            file_name=f"posto_{f_ini}_{f_fim}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
 # ═══════════════════════════════════════════
 # HISTÓRICO ENTRADAS
@@ -444,11 +527,10 @@ elif pagina == "📋 Histórico Entradas":
             st.success("Entrada excluída.")
             st.rerun()
 
-        df.to_excel("/tmp/combustivel_entradas.xlsx", index=False)
-        with open("/tmp/combustivel_entradas.xlsx", "rb") as f:
-            st.download_button("⬇️ Exportar Excel", data=f,
-                file_name=f"entradas_{date.today()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        excel = gerar_excel(df)
+        st.download_button("⬇️ Exportar Excel", data=excel,
+            file_name=f"entradas_{date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ═══════════════════════════════════════════
 # HISTÓRICO TRANSFERÊNCIAS
