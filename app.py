@@ -27,6 +27,51 @@ st.markdown("""
 h1,h2,h3,h4,p,span,label{color:#e8edd0;}
 h1{font-family:'Barlow Condensed',sans-serif;letter-spacing:1px;}
 .stCaption,[data-testid="stCaptionContainer"] p{color:#8aab80!important;}
+
+/* Sidebar — título e menu na cor do tema central */
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p{
+ color:#e8edd0!important;font-family:'Barlow Condensed',sans-serif!important;}
+[data-testid="stSidebar"] [data-testid="stRadio"] label,
+[data-testid="stSidebar"] [data-testid="stRadio"] label span,
+[data-testid="stSidebar"] [data-testid="stRadio"] label p,
+[data-testid="stSidebar"] [data-testid="stRadio"] label div{
+ color:#c8d8bc!important;font-family:'Barlow Condensed',sans-serif;}
+[data-testid="stSidebar"] [data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) span,
+[data-testid="stSidebar"] [data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) p{
+ color:#e8edd0!important;}
+
+/* Campos — fundo claro suave (sage), sem branco puro */
+.stTextInput input,
+.stNumberInput input,
+.stTextArea textarea,
+[data-testid="stDateInput"] input{
+ background:#dce6d2!important;color:#1a2818!important;
+ border:1px solid #4a6644!important;border-radius:8px!important;}
+.stTextInput input:focus,
+.stNumberInput input:focus,
+.stTextArea textarea:focus,
+[data-testid="stDateInput"] input:focus{
+ border-color:#6fcf60!important;box-shadow:0 0 0 1px #6fcf6044!important;}
+.stTextInput input::placeholder,
+.stTextArea textarea::placeholder{color:#6a7a64!important;}
+div[data-baseweb="select"] > div{
+ background:#dce6d2!important;border:1px solid #4a6644!important;
+ color:#1a2818!important;border-radius:8px!important;}
+div[data-baseweb="select"] div{color:#1a2818!important;}
+div[data-baseweb="select"] svg{fill:#4a6644!important;}
+ul[data-testid="stSelectboxVirtualDropdown"],
+div[data-baseweb="popover"] ul{background:#e8edd0!important;}
+div[data-baseweb="popover"] li{color:#1a2818!important;}
+[data-testid="stNumberInput"] button{
+ background:#cdd9c4!important;border-color:#4a6644!important;color:#1a2818!important;}
+[data-testid="stForm"]{
+ background:#0d180c!important;border:1px solid #1e2e1c!important;
+ border-radius:12px;padding:12px 16px;}
+[data-testid="stVerticalBlockBorderWrapper"]{
+ background:#0d180c!important;border-color:#1e2e1c!important;}
+
 div[data-testid="stMetric"]{background:#0d180c;border:1px solid #1e2e1c;border-radius:10px;padding:10px 14px;}
 div[data-testid="stMetric"] label{color:#8aab80!important;}
 div[data-testid="stMetricValue"]{color:#6fcf60!important;font-family:'Barlow Condensed',sans-serif;}
@@ -764,5 +809,3 @@ elif pagina == "📜 Histórico Planilha Posto":
         st.download_button("⬇️ Exportar Excel", data=excel,
                            file_name=f"historico_posto_{date.today()}.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-
