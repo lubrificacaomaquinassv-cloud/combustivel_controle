@@ -13,6 +13,97 @@ st.set_page_config(
     layout="wide",
 )
 
+CAP_COMBOIO = 5000
+CAP_S500 = 10000
+CAP_S10 = 5000
+CAP_GAS = 5000
+
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700&display=swap');
+[data-testid="stAppViewContainer"]{background:#0a1409;}
+[data-testid="stSidebar"]{background:#111c10;border-right:1px solid #1e2e1c;}
+[data-testid="stHeader"]{background:#0a1409;}
+h1,h2,h3,h4,p,span,label{color:#e8edd0;}
+h1{font-family:'Barlow Condensed',sans-serif;letter-spacing:1px;}
+.stCaption,[data-testid="stCaptionContainer"] p{color:#8aab80!important;}
+div[data-testid="stMetric"]{background:#0d180c;border:1px solid #1e2e1c;border-radius:10px;padding:10px 14px;}
+div[data-testid="stMetric"] label{color:#8aab80!important;}
+div[data-testid="stMetricValue"]{color:#6fcf60!important;font-family:'Barlow Condensed',sans-serif;}
+.sec{font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;
+ letter-spacing:2px;text-transform:uppercase;color:#8aab80;
+ border-left:4px solid #4a9e3f;padding-left:10px;margin:8px 0 12px;}
+.pump-row-4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:8px;}
+@media (max-width:1100px){.pump-row-4{grid-template-columns:repeat(2,1fr);}}
+.pump-stock{background:#111c10;border:1px solid #1e2e1c;border-radius:12px;padding:12px 10px;
+ text-align:center;font-family:'Barlow Condensed',sans-serif;}
+.pump-stock-title{font-size:10px;font-weight:700;color:#8aab80;text-transform:uppercase;
+ letter-spacing:1px;margin-bottom:6px;line-height:1.25;}
+.pump-stock-saldo{font-size:18px;font-weight:700;margin-top:4px;}
+.pump-stock-cap{font-size:10px;color:#8aab80;margin-top:2px;}
+.pump-stock-badge{display:inline-block;margin-top:6px;font-size:9px;font-weight:700;
+ padding:2px 10px;border-radius:12px;text-transform:uppercase;}
+</style>
+""", unsafe_allow_html=True)
+
+
+def fmt_l_tank(v):
+    try:
+        return f"{float(v):,.1f} L".replace(",", "X").replace(".", ",").replace("X", ".")
+    except (TypeError, ValueError):
+        return "0,0 L"
+
+
+def fill_color(pct, accent):
+    if pct <= 20:
+        return "#e74c3c"
+    if pct <= 40:
+        return "#d4a017"
+    return accent
+
+
+def level_badge(pct, accent):
+    if pct <= 20:
+        return "NÍVEL CRÍTICO", "#e74c3c", "#2a1010"
+    if pct <= 40:
+        return "NÍVEL BAIXO", "#d4a017", "#2a2200"
+    return "NÍVEL OK", accent, "#101820"
+
+
+def fuel_pump_svg(pct, color, uid, width=72, height=98):
+    pct = min(100.0, max(0.0, float(pct)))
+    fz_top, fz_h = 82, 56
+    fill_h = fz_h * pct / 100.0
+    y_fill = fz_top + (fz_h - fill_h)
+    pct_txt = f"{pct:.0f}%" if pct >= 10 else f"{pct:.1f}%"
+    fs = 11 if width < 90 else 17
+    return f"""<svg width="{width}" height="{height}" viewBox="0 0 110 150" xmlns="http://www.w3.org/2000/svg">
+  <defs><clipPath id="pz{uid}"><rect x="27" y="{fz_top}" width="46" height="{fz_h}" rx="4"/></clipPath></defs>
+  <rect x="12" y="138" width="86" height="7" rx="3.5" fill="#2c3440"/>
+  <rect x="20" y="22" width="56" height="118" rx="9" fill="#4a5568" stroke="#1e2e1c" stroke-width="1.5"/>
+  <rect x="28" y="30" width="40" height="20" rx="3" fill="#a8c0d8" opacity="0.45"/>
+  <rect x="27" y="{y_fill:.2f}" width="46" height="{fill_h:.2f}" fill="{color}" clip-path="url(#pz{uid})"/>
+  <rect x="70" y="55" width="18" height="12" rx="4" fill="#6a7585"/>
+  <rect x="84" y="48" width="10" height="26" rx="5" fill="#8a95a5"/>
+  <path d="M94 72 Q102 88 94 98" stroke="#1a1a1a" stroke-width="3" fill="none"/>
+  <text x="52" y="108" text-anchor="middle" fill="#ffffff"
+    font-family="Barlow Condensed,Arial,sans-serif" font-size="{fs}" font-weight="700">{pct_txt}</text>
+</svg>"""
+
+
+def pump_stock_card(pct, saldo, cap, title, accent, uid):
+    color = fill_color(pct, accent)
+    badge, badge_col, badge_bg = level_badge(pct, accent)
+    svg = fuel_pump_svg(pct, color, f"s{uid}", 72, 98)
+    return f"""
+<div class="pump-stock">
+  <div class="pump-stock-title">{title}</div>
+  {svg}
+  <div class="pump-stock-saldo" style="color:{accent}">{fmt_l_tank(saldo)}</div>
+  <div class="pump-stock-cap">Tanque {fmt_l_tank(cap)}</div>
+  <div class="pump-stock-badge" style="color:{badge_col};background:{badge_bg}">{badge}</div>
+</div>"""
+
 # ─────────────────────────────────────────────
 # CONEXÃO
 # ─────────────────────────────────────────────
@@ -121,13 +212,61 @@ def deletar_transferencia(tid: int):
     conn.close()
 
 # ─────────────────────────────────────────────
-# CONSULTAS
+# CONSULTAS — estoque por tanque (4 combustíveis)
 # ─────────────────────────────────────────────
-def carregar_saldo_geral():
+def _query_row(sql, params=None):
     conn = get_conn()
-    df = pd.read_sql_query("SELECT * FROM vw_saldo_combustivel_geral", conn)
+    df = pd.read_sql_query(sql, conn, params=params or [])
     conn.close()
-    return df
+    return df.iloc[0].to_dict() if not df.empty else {}
+
+
+def carregar_estoque_tanques():
+    """4 tanques: comboio + posto S-500, S-10 e gasolina (views oficiais)."""
+    cb = _query_row(
+        "SELECT saldo_litros FROM vw_saldo_combustivel_geral "
+        "WHERE upper(origem) = 'COMBOIO' LIMIT 1"
+    )
+    s500 = _query_row("SELECT saldo_litros FROM vw_saldo_posto_v2 LIMIT 1")
+    s10 = _query_row("SELECT saldo_litros FROM vw_saldo_s10_posto LIMIT 1")
+    gas = _query_row(
+        "SELECT saldo_estimado AS saldo_litros FROM vw_saldo_gasolina_posto LIMIT 1"
+    )
+    return [
+        {
+            "titulo": "COMBOIO — DIESEL S-500",
+            "saldo": float(cb.get("saldo_litros") or 0),
+            "cap": CAP_COMBOIO,
+            "accent": "#4a9e3f",
+            "uid": "cb",
+        },
+        {
+            "titulo": "POSTO — DIESEL S-500 ADITIVADO",
+            "saldo": float(s500.get("saldo_litros") or 0),
+            "cap": CAP_S500,
+            "accent": "#3498db",
+            "uid": "500",
+        },
+        {
+            "titulo": "POSTO — DIESEL S-10",
+            "saldo": float(s10.get("saldo_litros") or 0),
+            "cap": CAP_S10,
+            "accent": "#7ab0d4",
+            "uid": "10",
+        },
+        {
+            "titulo": "POSTO — GASOLINA COMUM",
+            "saldo": float(gas.get("saldo_litros") or 0),
+            "cap": CAP_GAS,
+            "accent": "#e67e22",
+            "uid": "gas",
+        },
+    ]
+
+
+def carregar_saldo_geral():
+    """Mantido para compatibilidade; preferir carregar_estoque_tanques()."""
+    return pd.DataFrame(carregar_estoque_tanques())
 
 def carregar_consumo_comboio(data_ini=None, data_fim=None):
     conn = get_conn()
@@ -220,31 +359,23 @@ pagina = st.sidebar.radio("Menu", [
 ])
 
 # ═══════════════════════════════════════════
-# SALDO GERAL
+# SALDO GERAL — relógio de estoque (4 tanques)
 # ═══════════════════════════════════════════
 if pagina == "📊 Saldo Geral":
-    st.title("📊 Saldo Geral de Combustível")
-    st.divider()
+    st.title("⛽ Controle de Combustível")
+    st.markdown(
+        '<div class="sec">Relógio de estoque — posto e comboio</div>',
+        unsafe_allow_html=True,
+    )
 
-    df = carregar_saldo_geral()
-    if df.empty:
-        st.info("Lance entradas para calcular o saldo.")
-    else:
-        for _, row in df.iterrows():
-            origem = row["origem"]
-            comb = row["combustivel"]
-            entrada = float(row["total_entrada_l"] or 0)
-            saida = float(row["total_saida_l"] or 0)
-            saldo = float(row["saldo_litros"] or 0)
-            with st.container(border=True):
-                st.markdown(f"### {alerta(saldo)} {origem} — {comb}")
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Total Entrada", fmt_l(entrada))
-                c2.metric("Total Saída", fmt_l(saida))
-                c3.metric("Saldo Atual", fmt_l(saldo),
-                          delta=f"{saldo:+.0f} L".replace(".", ","))
+    tanques = carregar_estoque_tanques()
+    cards = ""
+    for t in tanques:
+        pct = min(100.0, (t["saldo"] / t["cap"]) * 100) if t["cap"] > 0 else 0.0
+        cards += pump_stock_card(pct, t["saldo"], t["cap"], t["titulo"], t["accent"], t["uid"])
 
-    st.caption(f"Atualizado em: {date.today().strftime('%d/%m/%Y')}")
+    st.markdown(f'<div class="pump-row-4">{cards}</div>', unsafe_allow_html=True)
+    st.caption(f"Atualizado em: {date.today().strftime('%d/%m/%Y')} · SIGCF Bataguassu-MS")
 
 # ═══════════════════════════════════════════
 # LANÇAR ENTRADA
@@ -633,3 +764,5 @@ elif pagina == "📜 Histórico Planilha Posto":
         st.download_button("⬇️ Exportar Excel", data=excel,
                            file_name=f"historico_posto_{date.today()}.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
