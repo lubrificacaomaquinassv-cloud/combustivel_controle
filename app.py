@@ -1,5 +1,6 @@
 import streamlit as st
 import psycopg2
+from sigcf_auth import exigir_acesso, logo_html
 import pandas as pd
 from datetime import date
 from io import BytesIO
@@ -12,6 +13,8 @@ st.set_page_config(
     page_icon="⛽",
     layout="wide",
 )
+
+exigir_acesso("Controle de Combustível")
 
 CAP_COMBOIO = 5000
 CAP_S500 = 10000
@@ -88,6 +91,10 @@ div[data-testid="stMetricValue"]{color:#6fcf60!important;font-family:'Barlow Con
 .pump-stock-cap{font-size:10px;color:#8aab80;margin-top:2px;}
 .pump-stock-badge{display:inline-block;margin-top:6px;font-size:9px;font-weight:700;
  padding:2px 10px;border-radius:12px;text-transform:uppercase;}
+.logo-frame{background:linear-gradient(145deg,#0a1628,#0d2040);border:2px solid #c9a227;
+ border-radius:12px;padding:5px;display:inline-block;box-shadow:0 4px 18px rgba(0,0,0,.45);}
+.logo-frame img{display:block;border-radius:8px;}
+.sidebar-logo-wrap{margin-top:24px;padding-top:16px;border-top:1px solid #1e2e1c;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -390,7 +397,6 @@ def gerar_excel(df: pd.DataFrame) -> bytes:
 # ─────────────────────────────────────────────
 # SIDEBAR
 # ─────────────────────────────────────────────
-st.sidebar.image("https://img.icons8.com/color/96/gas-station.png", width=80)
 st.sidebar.title("Controle de Combustível")
 pagina = st.sidebar.radio("Menu", [
     "📊 Saldo Geral",
@@ -402,6 +408,10 @@ pagina = st.sidebar.radio("Menu", [
     "📋 Histórico Transferências",
     "📜 Histórico Planilha Posto",
 ])
+st.sidebar.markdown(
+    f'<div class="sidebar-logo-wrap">{logo_html(96)}</div>',
+    unsafe_allow_html=True,
+)
 
 # ═══════════════════════════════════════════
 # SALDO GERAL — relógio de estoque (4 tanques)
