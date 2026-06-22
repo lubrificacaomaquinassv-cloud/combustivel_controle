@@ -5,6 +5,11 @@ import pandas as pd
 from datetime import date
 from io import BytesIO
 
+# Linha do tempo oficial — saídas do posto (planilha + PWA)
+HIST_PLANILHA_INI = date(2026, 1, 1)
+HIST_PLANILHA_FIM = date(2026, 5, 14)
+PWA_POSTO_INI = date(2026, 5, 18)
+
 # ─────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────
@@ -333,7 +338,84 @@ def carregar_consumo_comboio(data_ini=None, data_fim=None):
     conn.close()
     return df
 
+def carregar_historico_posto(data_ini=None, data_fim=None):
+    conn = get_conn()
+    query = """SELECT data, veiculo AS frota, combustivel,
+                      litros AS litros_consumidos, observacao
+               FROM combustivel_historico_posto
+               WHERE data >= %s"""
+    params = [str(HIST_PLANILHA_INI)]
+    if data_ini:
+        query += " AND data >= %s"; params.append(str(data_ini))
+    if data_fim:
+        query += " AND data <= %s"; params.append(str(data_fim))
+    else:
+        query += " AND data <= %s"; params.append(str(HIST_PLANILHA_FIM))
+    query += " ORDER BY data DESC"
+    df = pd.read_sql_query(query, conn, params=params)
+    conn.close()
+    return df
+
+
+def carregar_consumo_posto_pwa(data_ini=None, data_fim=None, combustivel=None):
+    """Saídas registradas pelo PWA do posto (tabela posto)."""
+    conn = get_conn()
+    query = """
+        SELECT DATE(created_at) AS data, vehicle AS frota,
+               fuel_type AS combustivel,
+               COALESCE(operator, '') AS operador,
+               liters AS litros_consumidos
+        FROM posto
+        WHERE DATE(created_at) >= %s
+    """
+    params = [str(PWA_POSTO_INI)]
+    if data_ini:
+        query += " AND DATE(created_at) >= %s"; params.append(str(data_ini))
+    if data_fim:
+        query += " AND DATE(created_at) <= %s"; params.append(str(data_fim))
+    if combustivel and combustivel != "Todos":
+        query += " AND fuel_type ILIKE %s"; params.append(f"%{combustivel}%")
+    query += " ORDER BY created_at DESC"
+    df = pd.read_sql_query(query, conn, params=params)
+    conn.close()
+    return df
+
+
+def carregar_consumo_posto_unificado(data_ini=None, data_fim=None, combustivel=None, origem=None):
+    """Planilha (jan–14/mai/2026) + PWA (a partir de 18/mai/2026). Intervalo 15–17/mai sem dados."""
+    frames = []
+    if origem in (None, "Todos", "Planilha"):
+        df_h = carregar_historico_posto(data_ini, data_fim)
+        if not df_h.empty:
+            df_h = df_h.copy()
+            df_h["origem"] = "Planilha"
+            df_h["detalhe"] = df_h["observacao"].fillna("")
+            frames.append(df_h[["data", "frota", "combustivel", "litros_consumidos", "origem", "detalhe"]])
+    if origem in (None, "Todos", "PWA"):
+        df_p = carregar_consumo_posto_pwa(data_ini, data_fim, combustivel)
+        if not df_p.empty:
+            df_p = df_p.copy()
+            df_p["origem"] = "PWA"
+            df_p["detalhe"] = df_p["operador"].fillna("")
+            frames.append(df_p[["data", "frota", "combustivel", "litros_consumidos", "origem", "detalhe"]])
+    if not frames:
+        return pd.DataFrame(columns=["data", "frota", "combustivel", "litros_consumidos", "origem", "detalhe"])
+    df = pd.concat(frames, ignore_index=True)
+    if combustivel and combustivel != "Todos":
+        c = combustivel.upper()
+        if "S-500" in c or "S500" in c:
+            df = df[df["combustivel"].astype(str).str.upper().str.contains(r"S-?500|S500", regex=True, na=False)]
+        elif "S-10" in c or "S10" in c:
+            df = df[df["combustivel"].astype(str).str.upper().str.contains(r"S-?10|S10", regex=True, na=False)]
+        elif "GASOLINA" in c:
+            df = df[df["combustivel"].astype(str).str.upper().str.contains("GASOLINA", na=False)]
+        elif "ETANOL" in c:
+            df = df[df["combustivel"].astype(str).str.upper().str.contains("ETANOL", na=False)]
+    return df.sort_values("data", ascending=False).reset_index(drop=True)
+
+
 def carregar_consumo_posto(data_ini=None, data_fim=None, combustivel=None):
+    """Compatível: agregado diário só do PWA (relatório de hoje)."""
     conn = get_conn()
     query = """
         SELECT DATE(created_at) AS data, vehicle AS frota,
@@ -348,23 +430,8 @@ def carregar_consumo_posto(data_ini=None, data_fim=None, combustivel=None):
     if data_fim:
         query += " AND DATE(created_at) <= %s"; params.append(str(data_fim))
     if combustivel and combustivel != "Todos":
-        query += " AND fuel_type = %s"; params.append(combustivel)
+        query += " AND fuel_type ILIKE %s"; params.append(f"%{combustivel}%")
     query += " GROUP BY DATE(created_at), vehicle, fuel_type, operator ORDER BY data DESC"
-    df = pd.read_sql_query(query, conn, params=params)
-    conn.close()
-    return df
-
-def carregar_historico_posto(data_ini=None, data_fim=None):
-    conn = get_conn()
-    query = """SELECT data, veiculo AS frota, combustivel,
-                      litros AS litros_consumidos, observacao
-               FROM combustivel_historico_posto WHERE 1=1"""
-    params = []
-    if data_ini:
-        query += " AND data >= %s"; params.append(str(data_ini))
-    if data_fim:
-        query += " AND data <= %s"; params.append(str(data_fim))
-    query += " ORDER BY data DESC"
     df = pd.read_sql_query(query, conn, params=params)
     conn.close()
     return df
@@ -403,10 +470,9 @@ pagina = st.sidebar.radio("Menu", [
     "⛽ Lançar Entrada",
     "🔄 Transferência",
     "🚛 Consumo Comboio",
-    "🏪 Consumo Posto",
+    "🏪 Histórico Consumo Posto",
     "📋 Histórico Entradas",
     "📋 Histórico Transferências",
-    "📜 Histórico Planilha Posto",
 ])
 st.sidebar.markdown(
     f'<div class="sidebar-logo-wrap">{logo_html(96)}</div>',
@@ -430,7 +496,15 @@ if pagina == "📊 Saldo Geral":
         cards += pump_stock_card(pct, t["saldo"], t["cap"], t["titulo"], t["accent"], t["uid"])
 
     st.markdown(f'<div class="pump-row-4">{cards}</div>', unsafe_allow_html=True)
-    st.caption(f"Atualizado em: {date.today().strftime('%d/%m/%Y')} · SIGCF Bataguassu-MS")
+    st.caption(
+        f"Atualizado em: {date.today().strftime('%d/%m/%Y')} · SIGCF Bataguassu-MS"
+    )
+    st.caption(
+        "Saídas do posto: menu **Histórico Consumo Posto** · "
+        f"planilha {HIST_PLANILHA_INI.strftime('%d/%m/%Y')}–{HIST_PLANILHA_FIM.strftime('%d/%m/%Y')} · "
+        f"PWA a partir de {PWA_POSTO_INI.strftime('%d/%m/%Y')} "
+        "(intervalo 15–17/mai/2026 sem lançamentos — operação normal)."
+    )
 
 # ═══════════════════════════════════════════
 # LANÇAR ENTRADA
@@ -598,80 +672,96 @@ elif pagina == "🚛 Consumo Comboio":
         )
 
 # ═══════════════════════════════════════════
-# CONSUMO POSTO
+# HISTÓRICO CONSUMO POSTO (planilha + PWA)
 # ═══════════════════════════════════════════
-elif pagina == "🏪 Consumo Posto":
-    st.title("🏪 Consumo — Posto")
+elif pagina == "🏪 Histórico Consumo Posto":
+    st.title("🏪 Histórico de Consumo — Posto")
     st.divider()
+    st.info(
+        f"**Linha do tempo:** planilha importada "
+        f"({HIST_PLANILHA_INI.strftime('%d/%m/%Y')} → {HIST_PLANILHA_FIM.strftime('%d/%m/%Y')}) · "
+        f"PWA celular (a partir de {PWA_POSTO_INI.strftime('%d/%m/%Y')}). "
+        "Dias **15 a 17/05/2026** sem registros (virada planilha → PWA)."
+    )
 
-    # ── RELATÓRIO DE HOJE ──────────────────
+    # ── RELATÓRIO DE HOJE (só PWA) ─────────
     with st.container(border=True):
-        st.markdown("### 📤 Relatório Posto — Hoje")
+        st.markdown("### 📤 Hoje — PWA posto")
         df_hoje = carregar_consumo_posto(date.today(), date.today())
         if df_hoje.empty:
-            st.info("Nenhum abastecimento registrado hoje.")
+            st.info("Nenhum abastecimento registrado hoje no PWA.")
         else:
             c1, c2, c3 = st.columns(3)
             c1.metric("Total Diesel", fmt_l(df_hoje[df_hoje["combustivel"].str.contains("diesel", case=False, na=False)]["litros_consumidos"].sum()))
             c2.metric("Total Gasolina", fmt_l(df_hoje[df_hoje["combustivel"].str.contains("gasolina", case=False, na=False)]["litros_consumidos"].sum()))
             c3.metric("Frotas", df_hoje["frota"].nunique())
-
             st.dataframe(
                 df_hoje.rename(columns={"data": "Data", "frota": "Frota",
                                         "combustivel": "Combustível",
                                         "litros_consumidos": "Litros"}),
                 use_container_width=True, hide_index=True,
             )
-            excel_hoje = gerar_excel(df_hoje.rename(columns={
-                "data": "Data", "frota": "Frota",
-                "combustivel": "Combustível", "litros_consumidos": "Litros (L)"
-            }))
-            st.download_button(
-                "⬇️ Baixar Relatório de Hoje — Posto",
-                data=excel_hoje,
-                file_name=f"relatorio_posto_{date.today()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                type="primary",
-            )
 
     st.divider()
 
-    # ── FILTRO PERSONALIZADO ───────────────
-    st.markdown("### 🔍 Consulta por Período")
-    with st.expander("Filtros", expanded=False):
-        c1, c2, c3 = st.columns(3)
-        with c1: f_ini = st.date_input("Data início", value=None)
-        with c2: f_fim = st.date_input("Data fim", value=None)
-        with c3: f_comb = st.selectbox("Combustível", ["Todos"] + TODOS_COMBUSTIVEIS)
+    # ── HISTÓRICO COMPLETO ─────────────────
+    st.markdown("### 📜 Histórico completo (planilha + PWA)")
+    with st.expander("🔍 Filtros", expanded=True):
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            f_ini = st.date_input(
+                "Data início", value=HIST_PLANILHA_INI,
+                min_value=HIST_PLANILHA_INI,
+            )
+        with c2:
+            f_fim = st.date_input("Data fim", value=date.today())
+        with c3:
+            f_comb = st.selectbox("Combustível", ["Todos"] + TODOS_COMBUSTIVEIS)
+        with c4:
+            f_orig = st.selectbox("Origem", ["Todos", "Planilha", "PWA"])
 
-    df = carregar_consumo_posto(f_ini, f_fim, f_comb)
-    if not df.empty:
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Total Diesel", fmt_l(df[df["combustivel"].str.contains("diesel", case=False, na=False)]["litros_consumidos"].sum()))
-        m2.metric("Total Gasolina", fmt_l(df[df["combustivel"].str.contains("gasolina", case=False, na=False)]["litros_consumidos"].sum()))
-        m3.metric("Registros", len(df))
+    df = carregar_consumo_posto_unificado(f_ini, f_fim, f_comb, f_orig)
+    if df.empty:
+        st.info("Nenhum registro no período selecionado.")
+    else:
+        n_plan = int((df["origem"] == "Planilha").sum())
+        n_pwa = int((df["origem"] == "PWA").sum())
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total litros", fmt_l(df["litros_consumidos"].sum()))
+        m2.metric("Registros", len(df))
+        m3.metric("Planilha", n_plan)
+        m4.metric("PWA", n_pwa)
 
         st.dataframe(
-            df.rename(columns={"data": "Data", "frota": "Frota",
-                               "combustivel": "Combustível",
-                               "litros_consumidos": "Litros"}),
+            df.rename(columns={
+                "data": "Data", "frota": "Frota", "combustivel": "Combustível",
+                "litros_consumidos": "Litros", "origem": "Origem", "detalhe": "Operador/Obs.",
+            }),
             use_container_width=True, hide_index=True,
         )
 
-        st.subheader("🏪 Consumo por Frota")
-        por_frota = df.groupby(["frota", "combustivel"])["litros_consumidos"].sum().reset_index()
-        pivot = por_frota.pivot(index="frota", columns="combustivel", values="litros_consumidos").fillna(0)
-        st.bar_chart(pivot)
+        st.subheader("🏪 Consumo por frota (Top 15)")
+        por_frota = (
+            df.groupby("frota")["litros_consumidos"].sum()
+            .reset_index().sort_values("litros_consumidos", ascending=False).head(15)
+        )
+        st.bar_chart(por_frota.set_index("frota"))
+
+        st.subheader("📅 Litros por mês")
+        df_mes = df.copy()
+        df_mes["mes"] = pd.to_datetime(df_mes["data"]).dt.to_period("M").astype(str)
+        por_mes = df_mes.groupby(["mes", "origem"])["litros_consumidos"].sum().reset_index()
+        pivot_mes = por_mes.pivot(index="mes", columns="origem", values="litros_consumidos").fillna(0)
+        st.bar_chart(pivot_mes)
 
         excel_per = gerar_excel(df.rename(columns={
-            "data": "Data", "frota": "Frota",
-            "combustivel": "Combustível", "litros_consumidos": "Litros (L)"
+            "data": "Data", "frota": "Frota", "combustivel": "Combustível",
+            "litros_consumidos": "Litros (L)", "origem": "Origem", "detalhe": "Operador/Obs.",
         }))
         st.download_button(
-            "⬇️ Exportar Período — Posto",
+            "⬇️ Exportar histórico — Excel",
             data=excel_per,
-            file_name=f"posto_{f_ini}_{f_fim}.xlsx",
+            file_name=f"historico_posto_{f_ini}_{f_fim}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
@@ -776,46 +866,3 @@ elif pagina == "📋 Histórico Transferências":
             deletar_transferencia(sel)
             st.success("Transferência excluída.")
             st.rerun()
-
-# ═══════════════════════════════════════════
-# HISTÓRICO PLANILHA POSTO
-# ═══════════════════════════════════════════
-elif pagina == "📜 Histórico Planilha Posto":
-    st.title("📜 Histórico Posto — Importado da Planilha")
-    st.divider()
-    st.info("Saídas históricas importadas da planilha (Jan/2025 – Mai/2026)")
-
-    with st.expander("🔍 Filtros", expanded=True):
-        c1, c2 = st.columns(2)
-        with c1: f_ini = st.date_input("Data início", value=None)
-        with c2: f_fim = st.date_input("Data fim", value=None)
-
-    df = carregar_historico_posto(f_ini, f_fim)
-    if df.empty:
-        st.info("Nenhum registro encontrado.")
-    else:
-        m1, m2 = st.columns(2)
-        m1.metric("Total Registros", len(df))
-        m2.metric("Total Litros", fmt_l(df["litros_consumidos"].sum()))
-
-        st.dataframe(
-            df.rename(columns={"data": "Data", "frota": "Veículo",
-                               "combustivel": "Combustível",
-                               "litros_consumidos": "Litros",
-                               "observacao": "Observação"}),
-            use_container_width=True, hide_index=True,
-        )
-
-        st.subheader("🚜 Consumo por Veículo (Top 15)")
-        por_veiculo = df.groupby("frota")["litros_consumidos"].sum().reset_index().sort_values("litros_consumidos", ascending=False).head(15)
-        st.bar_chart(por_veiculo.set_index("frota"))
-
-        excel = gerar_excel(df.rename(columns={
-            "data": "Data", "frota": "Veículo",
-            "combustivel": "Combustível",
-            "litros_consumidos": "Litros (L)",
-            "observacao": "Observação"
-        }))
-        st.download_button("⬇️ Exportar Excel", data=excel,
-                           file_name=f"historico_posto_{date.today()}.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
