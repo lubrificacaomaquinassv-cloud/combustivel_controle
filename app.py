@@ -278,6 +278,56 @@ def _query_row(sql, params=None):
     return df.iloc[0].to_dict() if not df.empty else {}
 
 
+def carregar_tabela_conciliacao_s500() -> pd.DataFrame:
+    """Tabela entrada x saidas (desde ultima NF/transf.) ate hoje — S-500."""
+    hoje = date.today()
+    posto = _query_row(
+        "SELECT data_carga, entrada_l, saida_posto_l, transferencia_comboio_l, saldo_litros "
+        "FROM vw_saldo_posto_v2 LIMIT 1"
+    )
+    comboio = _query_row(
+        "SELECT data_transferencia_anterior, data_transferencia, "
+        "total_entrada_l, saida_comboio_v2_l, total_saida_l, saldo_litros "
+        "FROM vw_saldo_comboio LIMIT 1"
+    )
+    rows = []
+    if posto:
+        ent = float(posto.get("entrada_l") or 0)
+        cons = float(posto.get("saida_posto_l") or 0)
+        trf = float(posto.get("transferencia_comboio_l") or 0)
+        rows.append({
+            "Local": "POSTO",
+            "Combustivel": "DIESEL S-500 ADITIVADO",
+            "Data Entrada": posto.get("data_carga"),
+            "Entrada (L)": ent,
+            "Abast/Consumo (L)": cons,
+            "Transf. Comboio (L)": trf,
+            "Total Saidas (L)": cons + trf,
+            "Saldo (L)": float(posto.get("saldo_litros") or 0),
+            "Ate": hoje,
+        })
+    if comboio:
+        ent = float(comboio.get("total_entrada_l") or 0)
+        abast = float(comboio.get("saida_comboio_v2_l") or 0)
+        dt_ini = comboio.get("data_transferencia_anterior") or comboio.get("data_transferencia")
+        rows.append({
+            "Local": "COMBOIO",
+            "Combustivel": "DIESEL S-500 ADITIVADO",
+            "Data Entrada": dt_ini,
+            "Entrada (L)": ent,
+            "Abast/Consumo (L)": abast,
+            "Transf. Comboio (L)": 0.0,
+            "Total Saidas (L)": float(comboio.get("total_saida_l") or abast),
+            "Saldo (L)": float(comboio.get("saldo_litros") or 0),
+            "Ate": hoje,
+        })
+    df = pd.DataFrame(rows)
+    if not df.empty and "Data Entrada" in df.columns:
+        df["Data Entrada"] = pd.to_datetime(df["Data Entrada"]).dt.strftime("%d/%m/%Y")
+        df["Ate"] = pd.to_datetime(df["Ate"]).dt.strftime("%d/%m/%Y")
+    return df
+
+
 def carregar_estoque_tanques():
     """4 tanques: comboio + posto S-500, S-10 e gasolina (views oficiais)."""
     cb = _query_row(
@@ -496,6 +546,32 @@ if pagina == "📊 Saldo Geral":
         cards += pump_stock_card(pct, t["saldo"], t["cap"], t["titulo"], t["accent"], t["uid"])
 
     st.markdown(f'<div class="pump-row-4">{cards}</div>', unsafe_allow_html=True)
+
+    st.markdown(
+        '<div class="sec">Conciliacao S-500 — entrada x saidas ate hoje</div>',
+        unsafe_allow_html=True,
+    )
+    df_conc = carregar_tabela_conciliacao_s500()
+    if df_conc.empty:
+        st.warning("Sem dados de conciliacao S-500.")
+    else:
+        st.dataframe(
+            df_conc,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Entrada (L)": st.column_config.NumberColumn(format="%.2f"),
+                "Abast/Consumo (L)": st.column_config.NumberColumn(format="%.2f"),
+                "Transf. Comboio (L)": st.column_config.NumberColumn(format="%.2f"),
+                "Total Saidas (L)": st.column_config.NumberColumn(format="%.2f"),
+                "Saldo (L)": st.column_config.NumberColumn(format="%.2f"),
+            },
+        )
+        st.caption(
+            "POSTO: saldo = ultima NF − consumo PWA − transferencias ao comboio (desde a NF). "
+            "COMBOIO: saldo = transferencias recebidas − abastecimentos comboio_v2 (desde a ultima carga)."
+        )
+
     st.caption(
         f"Atualizado em: {date.today().strftime('%d/%m/%Y')} · SIGCF Bataguassu-MS"
     )
@@ -513,23 +589,26 @@ elif pagina == "⛽ Lançar Entrada":
     st.title("⛽ Lançar Entrada de Combustível")
     st.divider()
 
-    # IMPORTANTE: o Destino fica FORA do form. Dentro de st.form os widgets
-    # não disparam re-execução, então a lista de combustíveis nunca atualizava
-    # (era impossível escolher DIESEL S-10 com destino POSTO).
-    origem = st.selectbox("📍 Destino", ["POSTO", "COMBOIO"])
+    # Destino e combustível FORA do form: widgets dentro de st.form não
+    # disparam re-execução — a lista de combustíveis não atualizava ao trocar POSTO/COMBOIO.
+    origem = st.selectbox("📍 Destino", ["POSTO", "COMBOIO"], key="lanc_entrada_destino")
     opcoes_combustivel = COMBUSTIVEIS_COMBOIO if origem == "COMBOIO" else COMBUSTIVEIS_POSTO
+    combustivel = st.selectbox(
+        "⛽ Combustível",
+        opcoes_combustivel,
+        key=f"lanc_entrada_comb_{origem}",
+    )
 
     with st.form("form_entrada", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
             data_ent = st.date_input("📅 Data", value=date.today())
-            combustivel = st.selectbox("⛽ Combustível", opcoes_combustivel)
             quantidade = st.number_input("💧 Quantidade (litros)", min_value=0.0, step=0.01, format="%.2f")
         with col2:
             valor_litro = st.number_input("💰 Valor por Litro (R$)", min_value=0.0, step=0.001, format="%.4f")
             fornecedor = st.text_input("🏢 Fornecedor")
             nota_fiscal = st.text_input("📄 Nota Fiscal")
-        observacao = st.text_area("📝 Observação", height=60)
+        observacao = st.text_area("📝 Observação", height=68)
         submitted = st.form_submit_button("✅ Registrar Entrada", use_container_width=True, type="primary")
 
     if submitted:
@@ -564,7 +643,7 @@ elif pagina == "🔄 Transferência":
     st.info("Movimentação entre POSTO e COMBOIO. O comboio opera somente DIESEL S-500 ADITIVADO.")
 
     # Origem fora do form pelo mesmo motivo da página de entrada.
-    origem_t = st.selectbox("📤 Origem", ["POSTO", "COMBOIO"])
+    origem_t = st.selectbox("📤 Origem", ["POSTO", "COMBOIO"], key="lanc_transf_origem")
     destino_t = "COMBOIO" if origem_t == "POSTO" else "POSTO"
     st.markdown(f"**📥 Destino:** `{destino_t}`")
 
@@ -573,10 +652,10 @@ elif pagina == "🔄 Transferência":
         with col1:
             data_t = st.date_input("📅 Data", value=date.today())
             # Toda transferência envolve o comboio, que só opera S-500.
-            comb_t = st.selectbox("⛽ Combustível", COMBUSTIVEIS_COMBOIO)
+            comb_t = st.selectbox("⛽ Combustível", COMBUSTIVEIS_COMBOIO, key="lanc_transf_comb")
         with col2:
             qtd_t = st.number_input("💧 Quantidade (litros)", min_value=0.0, step=0.01, format="%.2f")
-        obs_t = st.text_area("📝 Observação", height=60)
+        obs_t = st.text_area("📝 Observação", height=68)
         submitted = st.form_submit_button("✅ Registrar Transferência", use_container_width=True, type="primary")
 
     if submitted:
@@ -716,9 +795,13 @@ elif pagina == "🏪 Histórico Consumo Posto":
         with c2:
             f_fim = st.date_input("Data fim", value=date.today())
         with c3:
-            f_comb = st.selectbox("Combustível", ["Todos"] + TODOS_COMBUSTIVEIS)
+            f_comb = st.selectbox(
+                "Combustível", ["Todos"] + TODOS_COMBUSTIVEIS, key="hist_posto_comb"
+            )
         with c4:
-            f_orig = st.selectbox("Origem", ["Todos", "Planilha", "PWA"])
+            f_orig = st.selectbox(
+                "Origem", ["Todos", "Planilha", "PWA"], key="hist_posto_origem"
+            )
 
     df = carregar_consumo_posto_unificado(f_ini, f_fim, f_comb, f_orig)
     if df.empty:
@@ -776,8 +859,14 @@ elif pagina == "📋 Histórico Entradas":
         c1, c2, c3, c4 = st.columns(4)
         with c1: f_ini = st.date_input("Data início", value=None)
         with c2: f_fim = st.date_input("Data fim", value=None)
-        with c3: f_comb = st.selectbox("Combustível", ["Todos"] + TODOS_COMBUSTIVEIS)
-        with c4: f_orig = st.selectbox("Origem", ["Todos", "COMBOIO", "POSTO"])
+        with c3:
+            f_comb = st.selectbox(
+                "Combustível", ["Todos"] + TODOS_COMBUSTIVEIS, key="hist_entradas_comb"
+            )
+        with c4:
+            f_orig = st.selectbox(
+                "Origem", ["Todos", "COMBOIO", "POSTO"], key="hist_entradas_origem"
+            )
 
     df = carregar_entradas(f_ini, f_fim,
                            f_comb if f_comb != "Todos" else None,
@@ -810,7 +899,7 @@ elif pagina == "📋 Histórico Entradas":
         st.divider()
         st.subheader("🗑️ Excluir Entrada")
         ids = df["id"].tolist()
-        sel = st.selectbox("Selecione o ID", ids)
+        sel = st.selectbox("Selecione o ID", ids, key="hist_entradas_del_id")
         reg = df[df["id"] == sel].iloc[0]
         st.caption(f"Data: {reg['data']} | {reg['combustivel']} | {reg['origem']} | {fmt_l(reg['quantidade_l'])}")
         if st.button("🗑️ Confirmar Exclusão", type="primary"):
@@ -859,7 +948,7 @@ elif pagina == "📋 Histórico Transferências":
         st.divider()
         st.subheader("🗑️ Excluir Transferência")
         ids = df["id"].tolist()
-        sel = st.selectbox("Selecione o ID", ids)
+        sel = st.selectbox("Selecione o ID", ids, key="hist_transf_del_id")
         reg = df[df["id"] == sel].iloc[0]
         st.caption(f"Data: {reg['data']} | {reg['combustivel']} | {reg['origem']} → {reg['destino']} | {fmt_l(reg['quantidade_l'])}")
         if st.button("🗑️ Confirmar Exclusão", type="primary"):
