@@ -2,8 +2,15 @@ import streamlit as st
 import psycopg2
 from sigcf_auth import exigir_acesso, logo_html
 import pandas as pd
-from datetime import date
+from datetime import date, datetime
 from io import BytesIO
+
+from conciliacao_combustivel.api import (
+    executar_auditoria_completa,
+    resumo_conciliacao_s500,
+    resumo_sap_baixas,
+    resumo_tanques,
+)
 
 # Linha do tempo oficial — saídas do posto (planilha + PWA)
 HIST_PLANILHA_INI = date(2026, 1, 1)
@@ -517,6 +524,7 @@ def gerar_excel(df: pd.DataFrame) -> bytes:
 st.sidebar.title("Controle de Combustível")
 pagina = st.sidebar.radio("Menu", [
     "📊 Saldo Geral",
+    "🔍 Conciliação / Auditoria",
     "⛽ Lançar Entrada",
     "🔄 Transferência",
     "🚛 Consumo Comboio",
@@ -581,6 +589,69 @@ if pagina == "📊 Saldo Geral":
         f"PWA a partir de {PWA_POSTO_INI.strftime('%d/%m/%Y')} "
         "(intervalo 15–17/mai/2026 sem lançamentos — operação normal)."
     )
+
+# ═══════════════════════════════════════════
+# CONCILIAÇÃO / AUDITORIA (Python vs Supabase)
+# ═══════════════════════════════════════════
+elif pagina == "🔍 Conciliação / Auditoria":
+    st.title("🔍 Conciliação e Auditoria")
+    st.markdown(
+        '<div class="sec">Validação Python — entradas, saídas, transferências e baixas SAP</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Recalcula saldos a partir das tabelas brutas (posto, comboio_v2, "
+        "combustivel_entrada, combustivel_transferencia) e compara com as views oficiais."
+    )
+
+    if st.button("▶ Executar auditoria completa", type="primary"):
+        st.session_state["auditoria_comb"] = executar_auditoria_completa()
+
+    aud = st.session_state.get("auditoria_comb")
+    if not aud:
+        st.info("Clique em **Executar auditoria completa** para validar o estoque.")
+    else:
+        if aud["ok_geral"]:
+            st.success("Conciliação OK — saldos Python batem com as views Supabase.")
+        else:
+            st.error("Divergências encontradas — revise os alertas abaixo.")
+
+        st.caption(f"Gerado em: {aud['gerado_em']}")
+
+        st.markdown("#### Conciliação S-500 (POSTO + COMBOIO)")
+        df_conc = resumo_conciliacao_s500()
+        st.dataframe(
+            df_conc,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Entrada (L)": st.column_config.NumberColumn(format="%.2f"),
+                "Consumo (L)": st.column_config.NumberColumn(format="%.2f"),
+                "Transf. (L)": st.column_config.NumberColumn(format="%.2f"),
+                "Saldo calc. (L)": st.column_config.NumberColumn(format="%.2f"),
+                "Saldo view (L)": st.column_config.NumberColumn(format="%.2f"),
+                "Dif. (L)": st.column_config.NumberColumn(format="%.3f"),
+            },
+        )
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("#### Tanques (views oficiais)")
+            st.dataframe(resumo_tanques(), use_container_width=True, hide_index=True)
+        with c2:
+            st.markdown("#### Baixas SAP")
+            st.dataframe(resumo_sap_baixas(), use_container_width=True, hide_index=True)
+
+        if aud["alertas"]:
+            st.markdown("#### Alertas")
+            for al in aud["alertas"]:
+                st.warning(al)
+
+        with st.expander("Últimas entradas (combustivel_entrada)"):
+            st.dataframe(pd.DataFrame(aud["entradas"]), use_container_width=True, hide_index=True)
+
+        with st.expander("Últimas transferências (combustivel_transferencia)"):
+            st.dataframe(pd.DataFrame(aud["transferencias"]), use_container_width=True, hide_index=True)
 
 # ═══════════════════════════════════════════
 # LANÇAR ENTRADA
