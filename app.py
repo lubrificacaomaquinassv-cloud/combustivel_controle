@@ -2,7 +2,7 @@ import streamlit as st
 import psycopg2
 from sigcf_auth import exigir_acesso, logo_html
 import pandas as pd
-from datetime import date, datetime
+from datetime import date
 from io import BytesIO
 
 from conciliacao_combustivel.api import (
@@ -10,6 +10,13 @@ from conciliacao_combustivel.api import (
     resumo_conciliacao_s500,
     resumo_sap_baixas,
     resumo_tanques,
+)
+from regua_tanque import litros_da_regua, tabela_regua
+from regua_tabelas import (
+    COMBOIO_ALTURA_CHEIA_CM,
+    COMBOIO_CAPACIDADE_L,
+    litros_comboio,
+    litros_posto_s500,
 )
 
 # Linha do tempo oficial — saídas do posto (planilha + PWA)
@@ -28,8 +35,8 @@ st.set_page_config(
 
 exigir_acesso("Controle de Combustível")
 
-CAP_COMBOIO = 5000
-CAP_S500 = 10000
+CAP_COMBOIO = 6000
+CAP_S500 = 30000
 CAP_S10 = 5000
 CAP_GAS = 5000
 
@@ -191,6 +198,25 @@ TODOS_COMBUSTIVEIS = ["DIESEL S-500 ADITIVADO", "GASOLINA COMUM", "ETANOL COMUM"
 # ─────────────────────────────────────────────
 # CRUD — ENTRADAS
 # ─────────────────────────────────────────────
+def obter_saldo_remanescente_comboio() -> float:
+    """Saldo no comboio imediatamente antes de nova carga POSTO->COMBOIO."""
+    row = _query_row("SELECT saldo_litros FROM vw_saldo_comboio LIMIT 1")
+    return float(row.get("saldo_litros") or 0)
+
+
+def obter_saldo_remanescente_posto(combustivel: str) -> float:
+    """Saldo no tanque imediatamente antes de registrar nova NF."""
+    if "S-500" in (combustivel or ""):
+        row = _query_row("SELECT saldo_litros FROM vw_saldo_posto_v2 LIMIT 1")
+    elif "S-10" in (combustivel or ""):
+        row = _query_row("SELECT saldo_litros FROM vw_saldo_s10_posto LIMIT 1")
+    elif "GASOLINA" in (combustivel or ""):
+        row = _query_row("SELECT saldo_estimado AS saldo_litros FROM vw_saldo_gasolina_posto LIMIT 1")
+    else:
+        return 0.0
+    return float(row.get("saldo_litros") or 0)
+
+
 def inserir_entrada(row: dict):
     try:
         conn = get_conn()
@@ -198,9 +224,10 @@ def inserir_entrada(row: dict):
         cur.execute("""
             INSERT INTO combustivel_entrada
                 (data, combustivel, origem, quantidade_l, valor_litro,
-                 fornecedor, nota_fiscal, observacao)
+                 fornecedor, nota_fiscal, observacao, saldo_remanescente_l)
             VALUES (%(data)s, %(combustivel)s, %(origem)s, %(quantidade_l)s,
-                    %(valor_litro)s, %(fornecedor)s, %(nota_fiscal)s, %(observacao)s)
+                    %(valor_litro)s, %(fornecedor)s, %(nota_fiscal)s, %(observacao)s,
+                    %(saldo_remanescente_l)s)
         """, row)
         conn.commit()
         cur.close()
@@ -243,9 +270,10 @@ def inserir_transferencia(row: dict):
         cur = conn.cursor()
         cur.execute("""
             INSERT INTO combustivel_transferencia
-                (data, combustivel, origem, destino, quantidade_l, observacao)
+                (data, combustivel, origem, destino, quantidade_l, observacao,
+                 saldo_remanescente_l)
             VALUES (%(data)s, %(combustivel)s, %(origem)s, %(destino)s,
-                    %(quantidade_l)s, %(observacao)s)
+                    %(quantidade_l)s, %(observacao)s, %(saldo_remanescente_l)s)
         """, row)
         conn.commit()
         cur.close()
@@ -289,42 +317,54 @@ def carregar_tabela_conciliacao_s500() -> pd.DataFrame:
     """Tabela entrada x saidas (desde ultima NF/transf.) ate hoje — S-500."""
     hoje = date.today()
     posto = _query_row(
-        "SELECT data_carga, entrada_l, saida_posto_l, transferencia_comboio_l, saldo_litros "
+        "SELECT data_carga, entrada_l, saldo_remanescente_l, entrada_efetiva_l, "
+        "saida_posto_l, transferencia_comboio_l, saldo_litros "
         "FROM vw_saldo_posto_v2 LIMIT 1"
     )
     comboio = _query_row(
-        "SELECT data_transferencia_anterior, data_transferencia, "
-        "total_entrada_l, saida_comboio_v2_l, total_saida_l, saldo_litros "
-        "FROM vw_saldo_comboio LIMIT 1"
+        "SELECT data_transferencia, total_entrada_l, saldo_ciclo_anterior_l, "
+        "entrada_efetiva_l, saida_comboio_v2_l, devolucao_posto_l, total_saida_l, "
+        "saldo_litros FROM vw_saldo_comboio LIMIT 1"
     )
     rows = []
     if posto:
-        ent = float(posto.get("entrada_l") or 0)
+        ent_nf = float(posto.get("entrada_l") or 0)
+        rem = float(posto.get("saldo_remanescente_l") or 0)
+        ent = float(posto.get("entrada_efetiva_l") or ent_nf + rem)
         cons = float(posto.get("saida_posto_l") or 0)
         trf = float(posto.get("transferencia_comboio_l") or 0)
         rows.append({
             "Local": "POSTO",
             "Combustivel": "DIESEL S-500 ADITIVADO",
             "Data Entrada": posto.get("data_carga"),
-            "Entrada (L)": ent,
+            "NF (L)": ent_nf,
+            "Remanescente (L)": rem,
+            "Entrada efetiva (L)": ent,
             "Abast/Consumo (L)": cons,
             "Transf. Comboio (L)": trf,
+            "Retorno POSTO (L)": 0.0,
             "Total Saidas (L)": cons + trf,
             "Saldo (L)": float(posto.get("saldo_litros") or 0),
             "Ate": hoje,
         })
     if comboio:
-        ent = float(comboio.get("total_entrada_l") or 0)
+        ent_trf = float(comboio.get("total_entrada_l") or 0)
+        rem = float(comboio.get("saldo_ciclo_anterior_l") or 0)
+        ent = float(comboio.get("entrada_efetiva_l") or ent_trf + rem)
         abast = float(comboio.get("saida_comboio_v2_l") or 0)
-        dt_ini = comboio.get("data_transferencia_anterior") or comboio.get("data_transferencia")
+        ret_posto = float(comboio.get("devolucao_posto_l") or 0)
+        dt_ini = comboio.get("data_transferencia")
         rows.append({
             "Local": "COMBOIO",
             "Combustivel": "DIESEL S-500 ADITIVADO",
             "Data Entrada": dt_ini,
-            "Entrada (L)": ent,
+            "Carga (L)": ent_trf,
+            "Remanescente (L)": rem,
+            "Entrada efetiva (L)": ent,
             "Abast/Consumo (L)": abast,
             "Transf. Comboio (L)": 0.0,
-            "Total Saidas (L)": float(comboio.get("total_saida_l") or abast),
+            "Retorno POSTO (L)": ret_posto,
+            "Total Saidas (L)": float(comboio.get("total_saida_l") or (abast + ret_posto)),
             "Saldo (L)": float(comboio.get("saldo_litros") or 0),
             "Ate": hoje,
         })
@@ -332,6 +372,30 @@ def carregar_tabela_conciliacao_s500() -> pd.DataFrame:
     if not df.empty and "Data Entrada" in df.columns:
         df["Data Entrada"] = pd.to_datetime(df["Data Entrada"]).dt.strftime("%d/%m/%Y")
         df["Ate"] = pd.to_datetime(df["Ate"]).dt.strftime("%d/%m/%Y")
+    return df
+
+
+def carregar_movimentos_comboio_s500(dias: int = 14) -> pd.DataFrame:
+    """Transferências S-500 que envolvem o comboio (cargas, zeramentos, ajustes)."""
+    conn = get_conn()
+    df = pd.read_sql_query(
+        """
+        SELECT id, data, origem, destino, quantidade_l,
+               coalesce(saldo_remanescente_l, 0) AS saldo_remanescente_l,
+               CASE WHEN upper(origem) = 'POSTO' AND upper(destino) = 'COMBOIO'
+                    THEN quantidade_l + coalesce(saldo_remanescente_l, 0)
+                    ELSE quantidade_l END AS entrada_efetiva_l,
+               observacao, created_at
+        FROM combustivel_transferencia
+        WHERE combustivel ILIKE '%%S-500%%'
+          AND (upper(origem) = 'COMBOIO' OR upper(destino) = 'COMBOIO')
+          AND data >= current_date - %s
+        ORDER BY data DESC, created_at DESC, id DESC
+        """,
+        conn,
+        params=[dias],
+    )
+    conn.close()
     return df
 
 
@@ -394,6 +458,41 @@ def carregar_consumo_comboio(data_ini=None, data_fim=None):
     df = pd.read_sql_query(query, conn, params=params)
     conn.close()
     return df
+
+
+def movimento_comboio_dia(dia):
+    """Entrada (posto→comboio) e saídas comboio_v2 no dia (fuso MS)."""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT coalesce(sum(quantidade_l), 0)
+        FROM combustivel_transferencia
+        WHERE upper(coalesce(origem, '')) = 'POSTO'
+          AND upper(coalesce(destino, '')) = 'COMBOIO'
+          AND data = %s
+        """,
+        [dia],
+    )
+    entrada = float(cur.fetchone()[0] or 0)
+    cur.execute(
+        """
+        SELECT coalesce(sum(liters), 0)
+        FROM comboio_v2
+        WHERE (created_at AT TIME ZONE 'America/Campo_Grande')::date = %s
+        """,
+        [dia],
+    )
+    saida = float(cur.fetchone()[0] or 0)
+    cur.execute(
+        "SELECT saldo_litros FROM vw_saldo_comboio LIMIT 1"
+    )
+    row = cur.fetchone()
+    saldo_view = float(row[0] or 0) if row else 0.0
+    cur.close()
+    conn.close()
+    return entrada, saida, saldo_view
+
 
 def carregar_historico_posto(data_ini=None, data_fim=None):
     conn = get_conn()
@@ -528,6 +627,7 @@ pagina = st.sidebar.radio("Menu", [
     "⛽ Lançar Entrada",
     "🔄 Transferência",
     "🚛 Consumo Comboio",
+    "📏 Régua Comboio",
     "🏪 Histórico Consumo Posto",
     "📋 Histórico Entradas",
     "📋 Histórico Transferências",
@@ -550,8 +650,9 @@ if pagina == "📊 Saldo Geral":
     tanques = carregar_estoque_tanques()
     cards = ""
     for t in tanques:
-        pct = min(100.0, (t["saldo"] / t["cap"]) * 100) if t["cap"] > 0 else 0.0
-        cards += pump_stock_card(pct, t["saldo"], t["cap"], t["titulo"], t["accent"], t["uid"])
+        pct = min(100.0, max(0.0, (t["saldo"] / t["cap"]) * 100)) if t["cap"] > 0 else 0.0
+        saldo_card = max(0.0, min(float(t["cap"]), float(t["saldo"])))
+        cards += pump_stock_card(pct, saldo_card, t["cap"], t["titulo"], t["accent"], t["uid"])
 
     st.markdown(f'<div class="pump-row-4">{cards}</div>', unsafe_allow_html=True)
 
@@ -571,13 +672,41 @@ if pagina == "📊 Saldo Geral":
                 "Entrada (L)": st.column_config.NumberColumn(format="%.2f"),
                 "Abast/Consumo (L)": st.column_config.NumberColumn(format="%.2f"),
                 "Transf. Comboio (L)": st.column_config.NumberColumn(format="%.2f"),
+                "Retorno POSTO (L)": st.column_config.NumberColumn(format="%.2f"),
                 "Total Saidas (L)": st.column_config.NumberColumn(format="%.2f"),
                 "Saldo (L)": st.column_config.NumberColumn(format="%.2f"),
             },
         )
         st.caption(
-            "POSTO: saldo = ultima NF − consumo PWA − transferencias ao comboio (desde a NF). "
-            "COMBOIO: saldo = transferencias recebidas − abastecimentos comboio_v2 (desde a ultima carga)."
+            "POSTO: saldo = NF + remanescente − consumo − transf. comboio. "
+            "COMBOIO: saldo = remanescente tanque + carga − abast. apos a carga. "
+            "Teto comboio 5.000 L."
+        )
+
+    st.markdown(
+        '<div class="sec">Movimentos comboio — cargas e zeramentos (S-500)</div>',
+        unsafe_allow_html=True,
+    )
+    df_mov = carregar_movimentos_comboio_s500(14)
+    if df_mov.empty:
+        st.info("Nenhuma transferencia envolvendo comboio nos ultimos 14 dias.")
+    else:
+        df_mov_show = df_mov.copy()
+        for col in ("quantidade_l", "saldo_remanescente_l", "entrada_efetiva_l"):
+            if col in df_mov_show.columns:
+                df_mov_show[col] = df_mov_show[col].apply(lambda x: fmt_l(float(x or 0)))
+        df_mov_show = df_mov_show.rename(columns={
+            "id": "ID", "data": "Data", "origem": "Origem", "destino": "Destino",
+            "quantidade_l": "Carga (L)", "saldo_remanescente_l": "Remanescente (L)",
+            "entrada_efetiva_l": "Efetiva tanque (L)", "observacao": "Observacao",
+        })
+        cols = ["ID", "Data", "Origem", "Destino", "Carga (L)", "Remanescente (L)",
+                "Efetiva tanque (L)", "Observacao"]
+        cols = [c for c in cols if c in df_mov_show.columns]
+        st.dataframe(df_mov_show[cols], use_container_width=True, hide_index=True)
+        st.caption(
+            "Ciclo: 3.019 (zero) − 1.017 − 811 = 1.191 | +3.673 = 4.864 | +802,40 = 5.666,40 | "
+            "−1.022 (apos carga 802) = **4.644,40 L** saldo."
         )
 
     st.caption(
@@ -670,15 +799,36 @@ elif pagina == "⛽ Lançar Entrada":
         key=f"lanc_entrada_comb_{origem}",
     )
 
+    saldo_rem_atual = 0.0
+    if origem == "POSTO":
+        saldo_rem_atual = obter_saldo_remanescente_posto(combustivel)
+        st.info(
+            f"Saldo remanescente no tanque **antes** desta NF: **{fmt_l(saldo_rem_atual)}**. "
+            f"Será somado à quantidade da nota fiscal."
+        )
+
     with st.form("form_entrada", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
             data_ent = st.date_input("📅 Data", value=date.today())
-            quantidade = st.number_input("💧 Quantidade (litros)", min_value=0.0, step=0.01, format="%.2f")
+            quantidade = st.number_input("💧 Quantidade NF (litros)", min_value=0.0, step=0.01, format="%.2f")
         with col2:
             valor_litro = st.number_input("💰 Valor por Litro (R$)", min_value=0.0, step=0.001, format="%.4f")
             fornecedor = st.text_input("🏢 Fornecedor")
             nota_fiscal = st.text_input("📄 Nota Fiscal")
+        remanescente = 0.0
+        if origem == "POSTO":
+            remanescente = st.number_input(
+                "Remanescente no tanque (L) — somado à NF",
+                value=float(saldo_rem_atual),
+                step=0.01,
+                format="%.2f",
+                help="Medição ou saldo do sistema imediatamente antes do descarregamento.",
+            )
+            st.caption(
+                f"Entrada efetiva no tanque: **{fmt_l(quantidade + remanescente)}** "
+                f"(NF {fmt_l(quantidade)} + remanescente {fmt_l(remanescente)})"
+            )
         observacao = st.text_area("📝 Observação", height=68)
         submitted = st.form_submit_button("✅ Registrar Entrada", use_container_width=True, type="primary")
 
@@ -695,11 +845,15 @@ elif pagina == "⛽ Lançar Entrada":
                 "fornecedor": fornecedor.strip().upper() or None,
                 "nota_fiscal": nota_fiscal.strip() or None,
                 "observacao": observacao.strip() or None,
+                "saldo_remanescente_l": remanescente if origem == "POSTO" else None,
             })
             if ok:
+                total_tanque = quantidade + (remanescente if origem == "POSTO" else 0.0)
                 st.success(
-                    f"✅ {msg} | {combustivel} | {origem} | {fmt_l(quantidade)}"
-                    + (f" | Total {fmt_r(quantidade * valor_litro)}" if valor_litro > 0 else "")
+                    f"✅ {msg} | {combustivel} | {origem} | NF {fmt_l(quantidade)}"
+                    + (f" + rem. {fmt_l(remanescente)}" if origem == "POSTO" else "")
+                    + f" = {fmt_l(total_tanque)} no tanque"
+                    + (f" | Total R$ {fmt_r(quantidade * valor_litro)}" if valor_litro > 0 else "")
                 )
                 st.balloons()
             else:
@@ -711,21 +865,119 @@ elif pagina == "⛽ Lançar Entrada":
 elif pagina == "🔄 Transferência":
     st.title("🔄 Transferência de Combustível")
     st.divider()
-    st.info("Movimentação entre POSTO e COMBOIO. O comboio opera somente DIESEL S-500 ADITIVADO.")
+    st.info(
+        "Movimentação entre POSTO e COMBOIO. O comboio opera somente DIESEL S-500 ADITIVADO. "
+        "Na carga POSTO→COMBOIO, informe os **cm da régua** antes e depois do abastecimento."
+    )
 
-    # Origem fora do form pelo mesmo motivo da página de entrada.
     origem_t = st.selectbox("📤 Origem", ["POSTO", "COMBOIO"], key="lanc_transf_origem")
     destino_t = "COMBOIO" if origem_t == "POSTO" else "POSTO"
     st.markdown(f"**📥 Destino:** `{destino_t}`")
+
+    saldo_rem_sistema = 0.0
+    cm_antes = 0.0
+    cm_depois = 0.0
+    cm_posto_antes = 0.0
+    litros_antes = 0.0
+    litros_depois = 0.0
+    litros_posto_antes = 0.0
+    diff_bomba = 0.0
+
+    if origem_t == "POSTO":
+        saldo_rem_sistema = obter_saldo_remanescente_comboio()
+        st.caption(f"Saldo calculado pelo sistema (referência): **{fmt_l(saldo_rem_sistema)}**")
+
+        st.markdown('<div class="sec">Medição régua — comboio</div>', unsafe_allow_html=True)
+        r1, r2 = st.columns(2)
+        with r1:
+            cm_antes = st.number_input(
+                "📏 Régua ANTES — comboio (cm)",
+                min_value=0.0,
+                max_value=COMBOIO_ALTURA_CHEIA_CM,
+                step=0.5,
+                format="%.1f",
+                key="transf_cm_antes_comboio",
+                help="Medir com comboio nivelado antes de receber diesel.",
+            )
+        with r2:
+            cm_depois = st.number_input(
+                "📏 Régua DEPOIS — comboio (cm)",
+                min_value=0.0,
+                max_value=COMBOIO_ALTURA_CHEIA_CM,
+                step=0.5,
+                format="%.1f",
+                key="transf_cm_depois_comboio",
+                help="Medir após abastecer (ex.: 77 cm → 3.280 L).",
+            )
+
+        litros_antes = litros_comboio(cm_antes) if cm_antes > 0 else 0.0
+        litros_depois = litros_comboio(cm_depois) if cm_depois > 0 else 0.0
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Volume régua ANTES", fmt_l(litros_antes))
+        m2.metric("Volume régua DEPOIS", fmt_l(litros_depois))
+        if litros_depois > 0 and litros_antes > 0:
+            m3.metric("Variação régua", fmt_l(litros_depois - litros_antes))
+
+        st.markdown('<div class="sec">Medição régua — posto (opcional)</div>', unsafe_allow_html=True)
+        cm_posto_antes = st.number_input(
+            "📏 Régua posto S-500 antes da transferência (cm)",
+            min_value=0.0,
+            step=0.5,
+            format="%.1f",
+            key="transf_cm_antes_posto",
+        )
+        if cm_posto_antes > 0:
+            litros_posto_antes = litros_posto_s500(cm_posto_antes)
+            st.caption(f"Volume posto (tabela S-500): **{fmt_l(litros_posto_antes)}**")
 
     with st.form("form_transf", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
             data_t = st.date_input("📅 Data", value=date.today())
-            # Toda transferência envolve o comboio, que só opera S-500.
             comb_t = st.selectbox("⛽ Combustível", COMBUSTIVEIS_COMBOIO, key="lanc_transf_comb")
         with col2:
-            qtd_t = st.number_input("💧 Quantidade (litros)", min_value=0.0, step=0.01, format="%.2f")
+            qtd_t = st.number_input(
+                "💧 Carga bomba / transferência (litros)",
+                min_value=0.0,
+                step=0.01,
+                format="%.2f",
+                help="Litros registrados na bomba ou contador da transferência.",
+            )
+
+        rem_comboio = 0.0
+        if origem_t == "POSTO":
+            rem_default = litros_antes if cm_antes > 0 else 0.0
+            rem_comboio = st.number_input(
+                "Remanescente comboio (L) — somado à carga",
+                value=rem_default,
+                step=0.01,
+                format="%.2f",
+                help=(
+                    "Use o volume da régua ANTES. Se a régua antes zerou mas a conferência "
+                    "pós-carga indicar diferença, lance a diferença aqui (ex.: 266 L)."
+                ),
+            )
+
+            if qtd_t > 0 and litros_depois > 0:
+                esperado = rem_comboio + qtd_t
+                diff_bomba = litros_depois - esperado
+                st.caption(
+                    f"Conferência: régua depois **{fmt_l(litros_depois)}** | "
+                    f"rem + bomba **{fmt_l(esperado)}** | diferença **{fmt_l(diff_bomba)}**"
+                )
+                if litros_antes <= 0 and abs(diff_bomba) > 0.01:
+                    st.warning(
+                        f"Diferença bomba vs régua pós-carga: **{fmt_l(diff_bomba)}**. "
+                        f"Você pode lançar **{fmt_l(max(diff_bomba, 0))}** como remanescente "
+                        f"para fechar com a régua depois ({fmt_l(litros_depois)} L)."
+                    )
+
+            st.caption(
+                f"Entrada efetiva no comboio: **{fmt_l(qtd_t + rem_comboio)}** "
+                f"(carga {fmt_l(qtd_t)} + remanescente {fmt_l(rem_comboio)})"
+            )
+
         obs_t = st.text_area("📝 Observação", height=68)
         submitted = st.form_submit_button("✅ Registrar Transferência", use_container_width=True, type="primary")
 
@@ -733,16 +985,42 @@ elif pagina == "🔄 Transferência":
         if qtd_t <= 0:
             st.error("⚠️ Informe a quantidade de litros.")
         else:
+            obs_parts = []
+            if obs_t.strip():
+                obs_parts.append(obs_t.strip())
+            if origem_t == "POSTO":
+                if cm_antes > 0 or litros_antes > 0:
+                    obs_parts.append(
+                        f"Régua comboio antes: {cm_antes:.1f} cm = {litros_antes:.1f} L"
+                    )
+                if cm_depois > 0 or litros_depois > 0:
+                    obs_parts.append(
+                        f"Régua comboio depois: {cm_depois:.1f} cm = {litros_depois:.1f} L"
+                    )
+                if cm_posto_antes > 0:
+                    obs_parts.append(
+                        f"Régua posto antes: {cm_posto_antes:.1f} cm = {litros_posto_antes:.1f} L"
+                    )
+                if qtd_t > 0 and litros_depois > 0:
+                    obs_parts.append(
+                        f"Conferência bomba: carga {qtd_t:.1f} L | diff régua {diff_bomba:+.1f} L"
+                    )
+
             ok, msg = inserir_transferencia({
                 "data": str(data_t),
                 "combustivel": comb_t,
                 "origem": origem_t,
                 "destino": destino_t,
                 "quantidade_l": qtd_t,
-                "observacao": obs_t.strip() or None,
+                "observacao": " | ".join(obs_parts) if obs_parts else None,
+                "saldo_remanescente_l": rem_comboio if origem_t == "POSTO" else None,
             })
             if ok:
-                st.success(f"✅ {msg} | {fmt_l(qtd_t)} de {origem_t} → {destino_t}")
+                total_cb = qtd_t + (rem_comboio if origem_t == "POSTO" else 0.0)
+                st.success(
+                    f"✅ {msg} | {fmt_l(qtd_t)} de {origem_t} → {destino_t}"
+                    + (f" = {fmt_l(total_cb)} no comboio" if origem_t == "POSTO" else "")
+                )
                 st.balloons()
             else:
                 st.error(f"❌ {msg}")
@@ -820,6 +1098,117 @@ elif pagina == "🚛 Consumo Comboio":
             file_name=f"comboio_{f_ini}_{f_fim}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
+# ═══════════════════════════════════════════
+# RÉGUA DO COMBOIO
+# ═══════════════════════════════════════════
+elif pagina == "📏 Régua Comboio":
+    st.title("Régua do comboio")
+    st.caption(
+        "Cálculo simples: saldo anterior + entrada − saídas do dia = teórico. "
+        "A régua (cm molhados) vira litros pelo cilindro deitado — perto do tanque real."
+    )
+
+    with st.expander("Ajustar tanque (uma vez)", expanded=False):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            cap_r = st.number_input("Capacidade (L)", min_value=100, value=CAP_COMBOIO, step=50)
+        with c2:
+            alt_r = st.number_input(
+                "Régua no cheio (cm)",
+                min_value=10.0,
+                value=150.0,
+                step=0.5,
+                help="Altura molhada com o tanque cheio. Meça uma vez.",
+            )
+        with c3:
+            passo_r = st.selectbox("Passo da tabela (cm)", [1, 2, 5], index=1)
+        pts_txt = st.text_area(
+            "Pontos da tabela da régua (opcional) — um por linha: cm, litros",
+            placeholder="0, 0\n20, 480\n75, 2500\n150, 5000",
+        )
+        pontos_r = []
+        for ln in pts_txt.splitlines():
+            bits = ln.replace(";", ",").split(",")
+            if len(bits) >= 2:
+                try:
+                    pontos_r.append((float(bits[0].strip()), float(bits[1].strip())))
+                except ValueError:
+                    pass
+
+    dia_r = st.date_input("Data da medição", value=date.today())
+    try:
+        ent_auto, sai_auto, saldo_view = movimento_comboio_dia(dia_r)
+    except Exception as e:
+        ent_auto, sai_auto, saldo_view = 0.0, 0.0, 0.0
+        st.warning(f"Não foi possível ler o movimento do PWA: {e}")
+
+    if st.session_state.get("regua_dia") != str(dia_r):
+        st.session_state.regua_dia = str(dia_r)
+        st.session_state.regua_ent = float(ent_auto)
+        st.session_state.regua_sai = float(sai_auto)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        ant_r = st.number_input(
+            "Saldo anterior (L)",
+            min_value=0.0,
+            value=0.0,
+            step=1.0,
+            help="Volume do último dia (anotado ou régua). No primeiro uso, informe o que tinha no tanque.",
+        )
+        ent_r = st.number_input("Entrada (L)", min_value=0.0, step=1.0, key="regua_ent")
+        sai_r = st.number_input("Saídas do dia (L)", min_value=0.0, step=1.0, key="regua_sai")
+    with c2:
+        cm_r = st.number_input("Régua — cm molhados", min_value=0.0, value=0.0, step=0.5)
+        vol_regua = litros_da_regua(cm_r, alt_r, cap_r, pontos_r or None) if cm_r > 0 else 0.0
+        anot_r = st.number_input(
+            "Volume anotado (L)",
+            min_value=0.0,
+            value=0.0,
+            step=1.0,
+            help="Deixe 0 para usar o volume da régua. Preencha se for confirmar um valor diferente.",
+        )
+        obs_r = st.text_input("Anotação", placeholder="Ex.: medido parado, tanque nivelado")
+
+    teorico_r = ant_r + ent_r - sai_r
+    vol_final = anot_r if anot_r > 0 else vol_regua
+    diff_r = (vol_final - teorico_r) if (cm_r > 0 or anot_r > 0) else None
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Teórico hoje", fmt_l(teorico_r))
+    m2.metric("Régua (calculado)", fmt_l(vol_regua) if cm_r > 0 else "—")
+    m3.metric("Volume anotado", fmt_l(vol_final) if vol_final else "—")
+    m4.metric(
+        "Diferença (anotado − teórico)",
+        fmt_l(diff_r) if diff_r is not None else "—",
+        delta=f"{diff_r:+.0f} L vs livro" if diff_r is not None else None,
+    )
+    st.caption(
+        f"Teórico = {fmt_l(ant_r)} + {fmt_l(ent_r)} − {fmt_l(sai_r)}. "
+        f"Saldo da view do sistema agora: {fmt_l(saldo_view)}. "
+        "Entrada e saídas já vêm do PWA do dia; ajuste se a régua foi lida antes de algum abastecimento."
+    )
+
+    tab_df = pd.DataFrame(
+        tabela_regua(alt_r, cap_r, float(passo_r), pontos_r or None),
+        columns=["Régua (cm)", "Volume (L)"],
+    )
+    tab_df["% tanque"] = (tab_df["Volume (L)"] / cap_r * 100).round(1)
+    st.markdown("##### Tabela da régua (imprimir / colar no tanque)")
+    st.dataframe(tab_df, use_container_width=True, hide_index=True, height=280)
+    st.download_button(
+        "Baixar tabela da régua (Excel)",
+        data=gerar_excel(tab_df),
+        file_name=f"tabela_regua_comboio_{int(alt_r)}cm.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    if obs_r:
+        st.info(f"Anotação: {obs_r}")
+    st.caption(
+        "No pátio, sem internet: abra o arquivo `regua_comboio.html` no celular "
+        "(pasta ATUALIZACAO_S10). Os lançamentos ficam no aparelho."
+    )
 
 # ═══════════════════════════════════════════
 # HISTÓRICO CONSUMO POSTO (planilha + PWA)
