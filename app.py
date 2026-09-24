@@ -16,7 +16,6 @@ from regua_tabelas import (
     COMBOIO_ALTURA_CHEIA_CM,
     COMBOIO_CAPACIDADE_L,
     litros_comboio,
-    litros_posto_s500,
 )
 
 # Linha do tempo oficial — saídas do posto (planilha + PWA)
@@ -867,7 +866,7 @@ elif pagina == "🔄 Transferência":
     st.divider()
     st.info(
         "Movimentação entre POSTO e COMBOIO. O comboio opera somente DIESEL S-500 ADITIVADO. "
-        "Na carga POSTO→COMBOIO, informe os **cm da régua** antes e depois do abastecimento."
+        "Na carga POSTO→COMBOIO, a **régua do comboio** é opcional: informe antes, depois ou ambas."
     )
 
     origem_t = st.selectbox("📤 Origem", ["POSTO", "COMBOIO"], key="lanc_transf_origem")
@@ -877,59 +876,52 @@ elif pagina == "🔄 Transferência":
     saldo_rem_sistema = 0.0
     cm_antes = 0.0
     cm_depois = 0.0
-    cm_posto_antes = 0.0
     litros_antes = 0.0
     litros_depois = 0.0
-    litros_posto_antes = 0.0
     diff_bomba = 0.0
 
     if origem_t == "POSTO":
         saldo_rem_sistema = obter_saldo_remanescente_comboio()
         st.caption(f"Saldo calculado pelo sistema (referência): **{fmt_l(saldo_rem_sistema)}**")
 
-        st.markdown('<div class="sec">Medição régua — comboio</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sec">Régua comboio (opcional — tabela tanque 6000 L)</div>', unsafe_allow_html=True)
+        st.caption("Preencha uma ou ambas. Comboio nivelado na hora da medição.")
         r1, r2 = st.columns(2)
         with r1:
-            cm_antes = st.number_input(
-                "📏 Régua ANTES — comboio (cm)",
-                min_value=0.0,
-                max_value=COMBOIO_ALTURA_CHEIA_CM,
-                step=0.5,
-                format="%.1f",
-                key="transf_cm_antes_comboio",
-                help="Medir com comboio nivelado antes de receber diesel.",
-            )
+            usar_antes = st.checkbox("Medir ANTES da carga", value=False, key="transf_usar_antes")
+            cm_antes = 0.0
+            if usar_antes:
+                cm_antes = st.number_input(
+                    "📏 cm régua ANTES",
+                    min_value=0.0,
+                    max_value=COMBOIO_ALTURA_CHEIA_CM,
+                    step=0.5,
+                    format="%.1f",
+                    key="transf_cm_antes_comboio",
+                )
         with r2:
-            cm_depois = st.number_input(
-                "📏 Régua DEPOIS — comboio (cm)",
-                min_value=0.0,
-                max_value=COMBOIO_ALTURA_CHEIA_CM,
-                step=0.5,
-                format="%.1f",
-                key="transf_cm_depois_comboio",
-                help="Medir após abastecer (ex.: 77 cm → 3.280 L).",
-            )
+            usar_depois = st.checkbox("Medir DEPOIS da carga", value=False, key="transf_usar_depois")
+            cm_depois = 0.0
+            if usar_depois:
+                cm_depois = st.number_input(
+                    "📏 cm régua DEPOIS",
+                    min_value=0.0,
+                    max_value=COMBOIO_ALTURA_CHEIA_CM,
+                    step=0.5,
+                    format="%.1f",
+                    key="transf_cm_depois_comboio",
+                )
 
-        litros_antes = litros_comboio(cm_antes) if cm_antes > 0 else 0.0
-        litros_depois = litros_comboio(cm_depois) if cm_depois > 0 else 0.0
+        litros_antes = litros_comboio(cm_antes) if usar_antes and cm_antes > 0 else 0.0
+        litros_depois = litros_comboio(cm_depois) if usar_depois and cm_depois > 0 else 0.0
 
         m1, m2, m3 = st.columns(3)
-        m1.metric("Volume régua ANTES", fmt_l(litros_antes))
-        m2.metric("Volume régua DEPOIS", fmt_l(litros_depois))
-        if litros_depois > 0 and litros_antes > 0:
+        m1.metric("Régua ANTES", fmt_l(litros_antes) if usar_antes else "—")
+        m2.metric("Régua DEPOIS", fmt_l(litros_depois) if usar_depois else "—")
+        if usar_antes and usar_depois and litros_depois > 0:
             m3.metric("Variação régua", fmt_l(litros_depois - litros_antes))
-
-        st.markdown('<div class="sec">Medição régua — posto (opcional)</div>', unsafe_allow_html=True)
-        cm_posto_antes = st.number_input(
-            "📏 Régua posto S-500 antes da transferência (cm)",
-            min_value=0.0,
-            step=0.5,
-            format="%.1f",
-            key="transf_cm_antes_posto",
-        )
-        if cm_posto_antes > 0:
-            litros_posto_antes = litros_posto_s500(cm_posto_antes)
-            st.caption(f"Volume posto (tabela S-500): **{fmt_l(litros_posto_antes)}**")
+        elif usar_depois and cm_depois > 0:
+            m3.metric("cm depois", f"{cm_depois:.1f}")
 
     with st.form("form_transf", clear_on_submit=True):
         col1, col2 = st.columns(2)
@@ -968,10 +960,15 @@ elif pagina == "🔄 Transferência":
                 )
                 if litros_antes <= 0 and abs(diff_bomba) > 0.01:
                     st.warning(
-                        f"Diferença bomba vs régua pós-carga: **{fmt_l(diff_bomba)}**. "
-                        f"Você pode lançar **{fmt_l(max(diff_bomba, 0))}** como remanescente "
-                        f"para fechar com a régua depois ({fmt_l(litros_depois)} L)."
+                        f"Diferença bomba vs régua depois: **{fmt_l(diff_bomba)}**. "
+                        f"Pode lançar **{fmt_l(max(diff_bomba, 0))}** L como remanescente "
+                        f"para fechar com a régua ({fmt_l(litros_depois)} L)."
                     )
+            elif qtd_t > 0 and litros_antes > 0 and litros_depois <= 0:
+                st.caption(
+                    f"Só régua antes: remanescente sugerido **{fmt_l(litros_antes)}** | "
+                    f"após carga bomba teórico **{fmt_l(litros_antes + qtd_t)}**"
+                )
 
             st.caption(
                 f"Entrada efetiva no comboio: **{fmt_l(qtd_t + rem_comboio)}** "
@@ -989,17 +986,13 @@ elif pagina == "🔄 Transferência":
             if obs_t.strip():
                 obs_parts.append(obs_t.strip())
             if origem_t == "POSTO":
-                if cm_antes > 0 or litros_antes > 0:
+                if cm_antes > 0:
                     obs_parts.append(
                         f"Régua comboio antes: {cm_antes:.1f} cm = {litros_antes:.1f} L"
                     )
-                if cm_depois > 0 or litros_depois > 0:
+                if cm_depois > 0:
                     obs_parts.append(
                         f"Régua comboio depois: {cm_depois:.1f} cm = {litros_depois:.1f} L"
-                    )
-                if cm_posto_antes > 0:
-                    obs_parts.append(
-                        f"Régua posto antes: {cm_posto_antes:.1f} cm = {litros_posto_antes:.1f} L"
                     )
                 if qtd_t > 0 and litros_depois > 0:
                     obs_parts.append(

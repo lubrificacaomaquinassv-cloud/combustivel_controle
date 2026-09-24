@@ -1,63 +1,70 @@
-"""Tabelas cm -> litros — comboio (retangular 6000 L) e posto S-500."""
+"""Tabelas cm -> litros — tanque comboio 6000 L (PDF fabricante)."""
 from __future__ import annotations
 
-from regua_tanque import litros_da_regua
+import json
+import re
+from pathlib import Path
 
-# Tanque comboio: retangular 6000 L, régua cheia ~150 cm
-# Calibrado: 77 cm = 3.280 L (medição 24/09/2026)
+from regua_tanque import litros_da_regua, litros_interpolado
+
 COMBOIO_ALTURA_CHEIA_CM = 150.0
 COMBOIO_CAPACIDADE_L = 6000.0
-COMBOIO_CM_CALIBRADO = 77.0
-COMBOIO_L_CALIBRADO = 3280.0
+
+_DATA_JSON = Path(__file__).resolve().parent / "data" / "tabela_comboio_raw.json"
 
 
-def _build_comboio_table() -> list[tuple[float, float]]:
-    """Pontos da tabela medidora — passa por 0/0, 77/3280 e 150/6000."""
-    pts: list[tuple[float, float]] = [(0.0, 0.0)]
-    for cm in range(5, 151, 5):
-        if cm <= COMBOIO_CM_CALIBRADO:
-            litros = (cm / COMBOIO_CM_CALIBRADO) * COMBOIO_L_CALIBRADO
+def _parse_tabela_pdf() -> list[tuple[float, float]]:
+    """Extrai pontos (cm, litros) da tabela medidora do PDF do fabricante."""
+    if not _DATA_JSON.is_file():
+        return _tabela_fallback()
+
+    raw = json.loads(_DATA_JSON.read_text(encoding="utf-8"))
+    points: list[tuple[float, float]] = [(0.0, 0.0)]
+
+    for row in raw[2:]:
+        base_str = str(row[0] or "").strip()
+        if not base_str.isdigit():
+            continue
+        base = int(base_str)
+        if base > 200:
+            continue
+        txt = row[2] if (row[1] or "").strip().upper() == "LITROS" else row[1]
+        if not txt:
+            continue
+        vals = [float(x) for x in re.findall(r"\d+", str(txt))]
+        vals = [v for v in vals if v <= COMBOIO_CAPACIDADE_L + 500]
+        if base == 0:
+            for i, litros in enumerate(vals, start=1):
+                points.append((float(i), litros))
         else:
-            litros = COMBOIO_L_CALIBRADO + (cm - COMBOIO_CM_CALIBRADO) * (
-                (COMBOIO_CAPACIDADE_L - COMBOIO_L_CALIBRADO)
-                / (COMBOIO_ALTURA_CHEIA_CM - COMBOIO_CM_CALIBRADO)
-            )
-        pts.append((float(cm), round(litros, 1)))
-    pts.append((COMBOIO_CM_CALIBRADO, COMBOIO_L_CALIBRADO))
-    pts.append((COMBOIO_ALTURA_CHEIA_CM, COMBOIO_CAPACIDADE_L))
-    pts.sort(key=lambda x: x[0])
-    # remove duplicatas de cm mantendo o ponto calibrado
-    out: list[tuple[float, float]] = []
-    for cm, litros in pts:
-        if out and out[-1][0] == cm:
-            if cm == COMBOIO_CM_CALIBRADO:
-                out[-1] = (cm, COMBOIO_L_CALIBRADO)
+            for i, litros in enumerate(vals):
+                points.append((float(base + i), litros))
+
+    points.sort(key=lambda x: x[0])
+    # deduplica cm repetidos
+    dedup: list[tuple[float, float]] = []
+    for cm, litros in points:
+        if dedup and dedup[-1][0] == cm:
+            dedup[-1] = (cm, litros)
         else:
-            out.append((cm, litros))
-    return out
+            dedup.append((cm, litros))
+    return dedup
 
 
-TABELA_COMBOIO: list[tuple[float, float]] = _build_comboio_table()
+def _tabela_fallback() -> list[tuple[float, float]]:
+    """Fallback se JSON do PDF não existir."""
+    return [
+        (0, 0), (77, 3280), (150, 6000),
+    ]
 
-# Posto S-500 — substituir pelos pontos da tabela física do posto quando disponível
-POSTO_S500_ALTURA_CHEIA_CM = 200.0
-POSTO_S500_CAPACIDADE_L = 30000.0
-TABELA_POSTO_S500: list[tuple[float, float]] = [
-    (0, 0),
-    (50, 7500),
-    (100, 15000),
-    (150, 22500),
-    (200, 30000),
-]
+
+TABELA_COMBOIO: list[tuple[float, float]] = _parse_tabela_pdf()
 
 
 def litros_comboio(cm: float) -> float:
-    return litros_da_regua(
-        cm, COMBOIO_ALTURA_CHEIA_CM, COMBOIO_CAPACIDADE_L, TABELA_COMBOIO
-    )
-
-
-def litros_posto_s500(cm: float) -> float:
-    return litros_da_regua(
-        cm, POSTO_S500_ALTURA_CHEIA_CM, POSTO_S500_CAPACIDADE_L, TABELA_POSTO_S500
-    )
+    if cm <= 0:
+        return 0.0
+    inter = litros_interpolado(cm, TABELA_COMBOIO)
+    if inter is not None:
+        return round(inter, 1)
+    return litros_da_regua(cm, COMBOIO_ALTURA_CHEIA_CM, COMBOIO_CAPACIDADE_L, TABELA_COMBOIO)
