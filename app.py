@@ -1,6 +1,7 @@
 import streamlit as st
 import psycopg2
 from sigcf_auth import exigir_acesso, logo_html
+from sigcf_theme import inject_theme, render_header as sigcf_header
 import pandas as pd
 from datetime import date
 from io import BytesIO
@@ -34,88 +35,37 @@ st.set_page_config(
 
 exigir_acesso("Controle de Combustível")
 
-CAP_COMBOIO = 6000
-CAP_S500 = 30000
-CAP_S10 = 5000
-CAP_GAS = 5000
-
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700&display=swap');
-[data-testid="stAppViewContainer"]{background:#0a1409;}
-[data-testid="stSidebar"]{background:#111c10;border-right:1px solid #1e2e1c;}
-[data-testid="stHeader"]{background:#0a1409;}
-h1,h2,h3,h4,p,span,label{color:#e8edd0;}
-h1{font-family:'Barlow Condensed',sans-serif;letter-spacing:1px;}
-.stCaption,[data-testid="stCaptionContainer"] p{color:#8aab80!important;}
-
-/* Sidebar — título e menu na cor do tema central */
+COMBUSTIVEL_EXTRA_CSS = """
 [data-testid="stSidebar"] h1,
 [data-testid="stSidebar"] h2,
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p{
- color:#e8edd0!important;font-family:'Barlow Condensed',sans-serif!important;}
+ color:var(--sigcf-text)!important;font-family:var(--sigcf-font)!important;}
 [data-testid="stSidebar"] [data-testid="stRadio"] label,
 [data-testid="stSidebar"] [data-testid="stRadio"] label span,
 [data-testid="stSidebar"] [data-testid="stRadio"] label p,
 [data-testid="stSidebar"] [data-testid="stRadio"] label div{
- color:#c8d8bc!important;font-family:'Barlow Condensed',sans-serif;}
+ color:#c8d8bc!important;font-family:var(--sigcf-font);}
 [data-testid="stSidebar"] [data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) span,
 [data-testid="stSidebar"] [data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) p{
- color:#e8edd0!important;}
-
-/* Campos — fundo claro suave (sage), sem branco puro */
-.stTextInput input,
-.stNumberInput input,
-.stTextArea textarea,
-[data-testid="stDateInput"] input{
- background:#dce6d2!important;color:#1a2818!important;
- border:1px solid #4a6644!important;border-radius:8px!important;}
-.stTextInput input:focus,
-.stNumberInput input:focus,
-.stTextArea textarea:focus,
-[data-testid="stDateInput"] input:focus{
- border-color:#6fcf60!important;box-shadow:0 0 0 1px #6fcf6044!important;}
-.stTextInput input::placeholder,
-.stTextArea textarea::placeholder{color:#6a7a64!important;}
-div[data-baseweb="select"] > div{
- background:#dce6d2!important;border:1px solid #4a6644!important;
- color:#1a2818!important;border-radius:8px!important;}
-div[data-baseweb="select"] div{color:#1a2818!important;}
-div[data-baseweb="select"] svg{fill:#4a6644!important;}
-ul[data-testid="stSelectboxVirtualDropdown"],
-div[data-baseweb="popover"] ul{background:#e8edd0!important;}
-div[data-baseweb="popover"] li{color:#1a2818!important;}
-[data-testid="stNumberInput"] button{
- background:#cdd9c4!important;border-color:#4a6644!important;color:#1a2818!important;}
-[data-testid="stForm"]{
- background:#0d180c!important;border:1px solid #1e2e1c!important;
- border-radius:12px;padding:12px 16px;}
-[data-testid="stVerticalBlockBorderWrapper"]{
- background:#0d180c!important;border-color:#1e2e1c!important;}
-
-div[data-testid="stMetric"]{background:#0d180c;border:1px solid #1e2e1c;border-radius:10px;padding:10px 14px;}
-div[data-testid="stMetric"] label{color:#8aab80!important;}
-div[data-testid="stMetricValue"]{color:#6fcf60!important;font-family:'Barlow Condensed',sans-serif;}
-.sec{font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;
- letter-spacing:2px;text-transform:uppercase;color:#8aab80;
- border-left:4px solid #4a9e3f;padding-left:10px;margin:8px 0 12px;}
+ color:var(--sigcf-text)!important;}
 .pump-row-4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:8px;}
 @media (max-width:1100px){.pump-row-4{grid-template-columns:repeat(2,1fr);}}
-.pump-stock{background:#111c10;border:1px solid #1e2e1c;border-radius:12px;padding:12px 10px;
- text-align:center;font-family:'Barlow Condensed',sans-serif;}
-.pump-stock-title{font-size:10px;font-weight:700;color:#8aab80;text-transform:uppercase;
+.pump-stock{background:#111c10;border:1px solid var(--sigcf-border);border-radius:12px;padding:12px 10px;
+ text-align:center;font-family:var(--sigcf-font);}
+.pump-stock-title{font-size:10px;font-weight:700;color:var(--sigcf-label);text-transform:uppercase;
  letter-spacing:1px;margin-bottom:6px;line-height:1.25;}
 .pump-stock-saldo{font-size:18px;font-weight:700;margin-top:4px;}
-.pump-stock-cap{font-size:10px;color:#8aab80;margin-top:2px;}
+.pump-stock-cap{font-size:10px;color:var(--sigcf-label);margin-top:2px;}
 .pump-stock-badge{display:inline-block;margin-top:6px;font-size:9px;font-weight:700;
  padding:2px 10px;border-radius:12px;text-transform:uppercase;}
-.logo-frame{background:linear-gradient(145deg,#0a1628,#0d2040);border:2px solid #c9a227;
- border-radius:12px;padding:5px;display:inline-block;box-shadow:0 4px 18px rgba(0,0,0,.45);}
-.logo-frame img{display:block;border-radius:8px;}
-.sidebar-logo-wrap{margin-top:24px;padding-top:16px;border-top:1px solid #1e2e1c;}
-</style>
-""", unsafe_allow_html=True)
+.sidebar-logo-wrap{margin-top:24px;padding-top:16px;border-top:1px solid var(--sigcf-border);}
+"""
+inject_theme(COMBUSTIVEL_EXTRA_CSS)
 
+CAP_COMBOIO = 6000
+CAP_S500 = 30000
+CAP_S10 = 5000
+CAP_GAS = 5000
 
 def fmt_l_tank(v):
     try:
@@ -621,26 +571,31 @@ def gerar_excel(df: pd.DataFrame) -> bytes:
 # ─────────────────────────────────────────────
 st.sidebar.title("Controle de Combustível")
 pagina = st.sidebar.radio("Menu", [
-    "📊 Saldo Geral",
-    "🔍 Conciliação / Auditoria",
-    "⛽ Lançar Entrada",
-    "🔄 Transferência",
-    "🚛 Consumo Comboio",
-    "📏 Régua Comboio",
-    "🏪 Histórico Consumo Posto",
-    "📋 Histórico Entradas",
-    "📋 Histórico Transferências",
+    "Saldo Geral",
+    "Conciliação / Auditoria",
+    "Lançar Entrada",
+    "Transferência",
+    "Consumo Comboio",
+    "Régua Comboio",
+    "Histórico Consumo Posto",
+    "Histórico Entradas",
+    "Histórico Transferências",
 ])
 st.sidebar.markdown(
     f'<div class="sidebar-logo-wrap">{logo_html(96)}</div>',
     unsafe_allow_html=True,
 )
 
+sigcf_header(
+    logo_html,
+    "Controle de Combustível",
+    "SIGCF — Posto, comboio e conciliação S-500",
+)
+
 # ═══════════════════════════════════════════
 # SALDO GERAL — relógio de estoque (4 tanques)
 # ═══════════════════════════════════════════
-if pagina == "📊 Saldo Geral":
-    st.title("⛽ Controle de Combustível")
+if pagina == "Saldo Geral":
     st.markdown(
         '<div class="sec">Relógio de estoque — posto e comboio</div>',
         unsafe_allow_html=True,
@@ -721,8 +676,7 @@ if pagina == "📊 Saldo Geral":
 # ═══════════════════════════════════════════
 # CONCILIAÇÃO / AUDITORIA (Python vs Supabase)
 # ═══════════════════════════════════════════
-elif pagina == "🔍 Conciliação / Auditoria":
-    st.title("🔍 Conciliação e Auditoria")
+elif pagina == "Conciliação / Auditoria":
     st.markdown(
         '<div class="sec">Validação Python — entradas, saídas, transferências e baixas SAP</div>',
         unsafe_allow_html=True,
@@ -784,8 +738,7 @@ elif pagina == "🔍 Conciliação / Auditoria":
 # ═══════════════════════════════════════════
 # LANÇAR ENTRADA
 # ═══════════════════════════════════════════
-elif pagina == "⛽ Lançar Entrada":
-    st.title("⛽ Lançar Entrada de Combustível")
+elif pagina == "Lançar Entrada":
     st.divider()
 
     # Destino e combustível FORA do form: widgets dentro de st.form não
@@ -861,8 +814,7 @@ elif pagina == "⛽ Lançar Entrada":
 # ═══════════════════════════════════════════
 # TRANSFERÊNCIA
 # ═══════════════════════════════════════════
-elif pagina == "🔄 Transferência":
-    st.title("🔄 Transferência de Combustível")
+elif pagina == "Transferência":
     st.divider()
     st.info(
         "Movimentação entre POSTO e COMBOIO. O comboio opera somente DIESEL S-500 ADITIVADO. "
@@ -1021,8 +973,7 @@ elif pagina == "🔄 Transferência":
 # ═══════════════════════════════════════════
 # CONSUMO COMBOIO
 # ═══════════════════════════════════════════
-elif pagina == "🚛 Consumo Comboio":
-    st.title("🚛 Consumo — Comboio")
+elif pagina == "Consumo Comboio":
     st.divider()
 
     # ── RELATÓRIO DE HOJE ──────────────────
@@ -1095,8 +1046,7 @@ elif pagina == "🚛 Consumo Comboio":
 # ═══════════════════════════════════════════
 # RÉGUA DO COMBOIO
 # ═══════════════════════════════════════════
-elif pagina == "📏 Régua Comboio":
-    st.title("Régua do comboio")
+elif pagina == "Régua Comboio":
     st.caption(
         "Cálculo simples: saldo anterior + entrada − saídas do dia = teórico. "
         "A régua (cm molhados) vira litros pelo cilindro deitado — perto do tanque real."
@@ -1206,8 +1156,7 @@ elif pagina == "📏 Régua Comboio":
 # ═══════════════════════════════════════════
 # HISTÓRICO CONSUMO POSTO (planilha + PWA)
 # ═══════════════════════════════════════════
-elif pagina == "🏪 Histórico Consumo Posto":
-    st.title("🏪 Histórico de Consumo — Posto")
+elif pagina == "Histórico Consumo Posto":
     st.divider()
     st.info(
         f"**Linha do tempo:** planilha importada "
@@ -1304,8 +1253,7 @@ elif pagina == "🏪 Histórico Consumo Posto":
 # ═══════════════════════════════════════════
 # HISTÓRICO ENTRADAS
 # ═══════════════════════════════════════════
-elif pagina == "📋 Histórico Entradas":
-    st.title("📋 Histórico de Entradas")
+elif pagina == "Histórico Entradas":
     st.divider()
 
     with st.expander("🔍 Filtros", expanded=True):
@@ -1368,8 +1316,7 @@ elif pagina == "📋 Histórico Entradas":
 # ═══════════════════════════════════════════
 # HISTÓRICO TRANSFERÊNCIAS
 # ═══════════════════════════════════════════
-elif pagina == "📋 Histórico Transferências":
-    st.title("📋 Histórico de Transferências")
+elif pagina == "Histórico Transferências":
     st.divider()
 
     with st.expander("🔍 Filtros", expanded=True):
