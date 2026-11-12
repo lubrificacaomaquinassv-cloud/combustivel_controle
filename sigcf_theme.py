@@ -1,4 +1,4 @@
-"""Tema visual SIGCF v5 — Lovable + Segoe UI (compartilhado entre apps Streamlit)."""
+"""Tema visual SIGCF v6 — Lovable + Inter (compartilhado entre apps Streamlit)."""
 from __future__ import annotations
 
 import streamlit as st
@@ -11,9 +11,16 @@ SIGCF_THEME_CSS = """
  --sigcf-text:#e8edd0;--sigcf-label:#8aab80;--sigcf-green:#6fcf60;
  --sigcf-gold:#ffd966;--sigcf-ouro:#c9a227;
  --sigcf-navy-a:#0a1628;--sigcf-navy-b:#0d2040;
- --sigcf-font:'Segoe UI','Segoe UI Variable',system-ui,-apple-system,sans-serif;
+ --sigcf-font:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+ --sigcf-shadow-sm:0 2px 8px rgba(0,0,0,.18),0 1px 0 rgba(111,207,96,.06);
+ --sigcf-shadow-md:0 6px 22px rgba(0,0,0,.28),0 0 0 1px rgba(42,64,48,.6);
 }
-html,body,[class*="css"]{font-family:var(--sigcf-font)!important;}
+html,body,[class*="css"]{
+ font-family:var(--sigcf-font)!important;
+ -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;}
+table,.sigcf-table-wrap,[data-testid="stMetricValue"],
+[data-testid="stDataFrame"],[data-testid="stTable"]{
+ font-family:var(--sigcf-font)!important;}
 [data-testid="stAppViewContainer"]{background:var(--sigcf-bg);padding-top:0!important;}
 [data-testid="stSidebar"]{background:#111c10;border-right:1px solid var(--sigcf-border);}
 header[data-testid="stHeader"]{
@@ -29,6 +36,8 @@ h1,h2,h3,h4{
 .stCaption,[data-testid="stCaptionContainer"] p{
  color:var(--sigcf-ouro)!important;font-family:var(--sigcf-font)!important;
  letter-spacing:0.1em;text-transform:uppercase!important;font-size:12px!important;}
+
+/* Faixa azul Lovable — cabeçalho institucional */
 .sigcf-header-band{
  background:linear-gradient(145deg,var(--sigcf-navy-a) 0%,var(--sigcf-navy-b) 100%);
  border:1px solid rgba(201,162,39,.35);border-bottom:2px solid var(--sigcf-green);
@@ -48,10 +57,13 @@ h1,h2,h3,h4{
 .logo-frame{background:transparent;border:2px solid var(--sigcf-ouro);
  border-radius:12px;padding:5px;display:inline-block;box-shadow:none;}
 .logo-frame img{display:block;border-radius:8px;}
+
 .sec{
  font-family:var(--sigcf-font)!important;font-size:12px;font-weight:700;
  letter-spacing:0.14em;text-transform:uppercase;color:var(--sigcf-gold);
  border-left:4px solid var(--sigcf-green);padding-left:10px;margin:8px 0 12px;}
+
+/* Labels de campos — maiúsculas + verde claro (corpo do painel) */
 [data-testid="stWidgetLabel"] p,
 [data-testid="stWidgetLabel"] label,
 [data-testid="stWidgetLabel"] span,
@@ -60,18 +72,21 @@ h1,h2,h3,h4{
  color:var(--sigcf-label)!important;font-family:var(--sigcf-font)!important;
  font-size:11px!important;font-weight:600!important;
  letter-spacing:0.1em!important;text-transform:uppercase!important;}
+
+/* Subtítulos de bloco — ouro só nos títulos de seção interna */
 .stMarkdown p strong,
 [data-testid="stMarkdownContainer"] p strong{
  color:var(--sigcf-gold)!important;font-family:var(--sigcf-font)!important;
  font-weight:700!important;letter-spacing:0.12em!important;
  text-transform:uppercase!important;font-size:13px!important;}
+
 .stTextInput input,.stNumberInput input,.stTextArea textarea,
-[data-testid="stDateInput"] input,[data-testid="stTimeInput"] input{
+[data-testid="stDateInput"] input{
  background:#dce6d2!important;color:#1a2818!important;
  border:1px solid var(--sigcf-border)!important;border-radius:8px!important;
  font-family:var(--sigcf-font)!important;}
 .stTextInput input:focus,.stNumberInput input:focus,.stTextArea textarea:focus,
-[data-testid="stDateInput"] input:focus,[data-testid="stTimeInput"] input:focus{
+[data-testid="stDateInput"] input:focus{
  border-color:var(--sigcf-green)!important;box-shadow:0 0 0 2px rgba(111,207,96,.45)!important;}
 div[data-baseweb="select"] > div{
  background:#dce6d2!important;border:1px solid var(--sigcf-border)!important;
@@ -86,47 +101,62 @@ div[data-baseweb="popover"] li{color:#1a2818!important;font-family:var(--sigcf-f
  background:#cdd9c4!important;border-color:var(--sigcf-border)!important;color:#1a2818!important;}
 [data-testid="stForm"]{
  background:var(--sigcf-card)!important;border:1px solid var(--sigcf-border)!important;
- border-radius:12px;padding:12px 16px;}
+ border-radius:14px;padding:14px 18px;
+ box-shadow:var(--sigcf-shadow-sm)!important;}
 [data-testid="stVerticalBlockBorderWrapper"]{
- background:var(--sigcf-card)!important;border-color:var(--sigcf-border)!important;}
+ background:var(--sigcf-card)!important;border-color:var(--sigcf-border)!important;
+ border-radius:14px!important;box-shadow:var(--sigcf-shadow-sm)!important;
+ overflow:hidden;}
 div[data-testid="stMetric"]{
  background:var(--sigcf-card);border:1px solid var(--sigcf-green);
- border-left:4px solid var(--sigcf-green);border-radius:8px;padding:12px 16px;}
+ border-left:4px solid var(--sigcf-green);border-radius:12px;padding:14px 18px;
+ box-shadow:var(--sigcf-shadow-md);}
 div[data-testid="stMetric"] label{
  color:var(--sigcf-label)!important;font-family:var(--sigcf-font)!important;
  font-size:11px!important;letter-spacing:0.12em!important;text-transform:uppercase!important;}
 div[data-testid="stMetricValue"]{
  color:var(--sigcf-gold)!important;font-family:var(--sigcf-font)!important;
  font-weight:700!important;font-size:1.6rem!important;}
+
 .stTabs [data-baseweb="tab-list"]{
  background:linear-gradient(180deg,var(--sigcf-navy-b) 0%,var(--sigcf-card) 100%);
  border-bottom:2px solid var(--sigcf-green)!important;gap:4px;
  padding:8px 10px 0;border-radius:0 0 10px 10px;margin-top:0;}
-.stTabs [data-baseweb="tab"],.stTabs button[data-baseweb="tab"]{
+.stTabs [data-baseweb="tab"],
+.stTabs button[data-baseweb="tab"]{
  color:var(--sigcf-label)!important;font-family:var(--sigcf-font)!important;
  font-weight:700;letter-spacing:0.12em;text-transform:uppercase;
  font-size:12px!important;border-bottom:3px solid transparent!important;
  padding-bottom:10px!important;background:transparent!important;}
-.stTabs [data-baseweb="tab"]:hover,.stTabs button[data-baseweb="tab"]:hover{color:var(--sigcf-gold)!important;}
+.stTabs [data-baseweb="tab"]:hover,
+.stTabs button[data-baseweb="tab"]:hover{color:var(--sigcf-gold)!important;}
 .stTabs button[data-baseweb="tab"][aria-selected="true"],
 .stTabs [data-baseweb="tab"][aria-selected="true"]{
- color:var(--sigcf-gold)!important;border-bottom:3px solid var(--sigcf-green)!important;}
+ color:var(--sigcf-gold)!important;
+ border-bottom:3px solid var(--sigcf-green)!important;}
 .stTabs [data-baseweb="tab-highlight"]{
- background-color:var(--sigcf-green)!important;height:3px!important;bottom:0!important;}
-.stTabs [data-baseweb="tab-border"]{background-color:var(--sigcf-border)!important;height:1px!important;}
-.stTabs button[data-baseweb="tab"] p,.stTabs [data-baseweb="tab"] p{
- color:inherit!important;font-size:12px!important;letter-spacing:0.12em!important;text-transform:uppercase!important;}
+ background-color:var(--sigcf-green)!important;height:3px!important;
+ bottom:0!important;}
+.stTabs [data-baseweb="tab-border"]{
+ background-color:var(--sigcf-border)!important;height:1px!important;}
+.stTabs button[data-baseweb="tab"] p,
+.stTabs [data-baseweb="tab"] p{color:inherit!important;font-size:12px!important;
+ letter-spacing:0.12em!important;text-transform:uppercase!important;}
 [data-testid="stTabs"]{margin-top:8px;margin-bottom:14px;}
 [data-testid="stExpander"]{
- background:var(--sigcf-card)!important;border:1px solid var(--sigcf-border)!important;border-radius:10px;}
+ background:var(--sigcf-card)!important;border:1px solid var(--sigcf-border)!important;
+ border-radius:14px!important;box-shadow:var(--sigcf-shadow-md)!important;
+ overflow:hidden;}
+[data-testid="stExpander"] details,
+[data-testid="stExpander"] > div{border-radius:14px;}
 [data-testid="stExpander"] summary{
  color:var(--sigcf-gold)!important;font-family:var(--sigcf-font)!important;
  text-transform:uppercase;letter-spacing:0.08em;font-weight:600;}
-div[data-testid="stCheckbox"] label span{color:var(--sigcf-text)!important;}
 .stButton button,[data-testid="stFormSubmitButton"] button,[data-testid="stDownloadButton"] button,
 .stTextInput input,.stNumberInput input,[data-testid="stDateInput"] input,
 div[data-baseweb="select"] > div{
  transition:border-color .18s ease,background .18s ease,box-shadow .18s ease,color .18s ease;}
+/* Botões secundários — contorno verde */
 .main .stButton > button{
  background:rgba(15,31,18,.88)!important;color:var(--sigcf-text)!important;
  border:1px solid var(--sigcf-green)!important;
@@ -137,6 +167,7 @@ div[data-baseweb="select"] > div{
  background:rgba(111,207,96,.14)!important;border-color:var(--sigcf-ouro)!important;}
 .main .stButton > button p{color:var(--sigcf-text)!important;
  font-size:0.76rem!important;letter-spacing:0.12em!important;}
+/* Botões principais — verde + borda ouro */
 [data-testid="stFormSubmitButton"] button,[data-testid="stDownloadButton"] button{
  background:linear-gradient(180deg,#5aad4f,#4a9e3f)!important;color:#fff!important;
  border:2px solid var(--sigcf-ouro)!important;
@@ -163,28 +194,63 @@ hr,.sigcf-op-sep{
  background:var(--sigcf-card)!important;border:1px solid var(--sigcf-border)!important;}
 [data-testid="stAlert"] p,[data-testid="stAlert"] span{color:var(--sigcf-text)!important;
  font-size:12px!important;letter-spacing:0.04em;}
-[data-testid="stMetric"]{transition:box-shadow .18s ease;}
-div[data-testid="stMetric"]:hover{box-shadow:0 0 0 1px rgba(111,207,96,.35);}
+[data-testid="stAlert"]:has([data-testid="stAlertContentInfo"]),
+.stAlert[data-baseweb="notification"]{
+ border-color:var(--sigcf-green)!important;
+ background:rgba(15,31,18,.95)!important;}
+[data-testid="stMetric"]{transition:box-shadow .22s ease,transform .22s ease;}
+div[data-testid="stMetric"]:hover{
+ box-shadow:0 8px 28px rgba(0,0,0,.34),0 0 0 1px rgba(111,207,96,.4);}
 .main .block-container{padding-top:0.4rem!important;padding-bottom:2.5rem;max-width:1180px;}
-.sigcf-table-wrap{border:1px solid var(--sigcf-border)!important;border-radius:10px;}
-.sigcf-table-wrap::-webkit-scrollbar{height:6px;width:6px;}
-.sigcf-table-wrap::-webkit-scrollbar-thumb{background:var(--sigcf-green);border-radius:4px;}
-.sigcf-table-wrap::-webkit-scrollbar-track{background:var(--sigcf-card);}
+.sigcf-table-wrap{
+ border:1px solid var(--sigcf-border)!important;border-radius:12px;
+ box-shadow:var(--sigcf-shadow-md);overflow:hidden;}
+.sigcf-table-wrap table{
+ width:100%;border-collapse:collapse;background:var(--sigcf-card);
+ font-family:var(--sigcf-font)!important;font-size:12px;line-height:1.45;}
+.sigcf-table-wrap thead th{
+ padding:10px 12px;background:#1a2818;color:var(--sigcf-gold);
+ font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
+ border-bottom:2px solid var(--sigcf-border);white-space:nowrap;
+ position:sticky;top:0;z-index:1;}
+.sigcf-table-wrap tbody td{
+ padding:9px 12px;color:var(--sigcf-text);border-bottom:1px solid var(--sigcf-border);
+ white-space:nowrap;font-variant-numeric:tabular-nums;}
+.sigcf-table-wrap tbody tr:nth-child(even) td{background:rgba(17,28,16,.55);}
+.sigcf-table-wrap tbody tr:hover td{background:rgba(111,207,96,.1);}
+.sigcf-table-wrap tbody tr:last-child td{border-bottom:none;}
+.sigcf-table-scroll::-webkit-scrollbar{height:6px;width:6px;}
+.sigcf-table-scroll::-webkit-scrollbar-thumb{background:var(--sigcf-green);border-radius:4px;}
+.sigcf-table-scroll::-webkit-scrollbar-track{background:var(--sigcf-card);}
+[data-testid="stDataFrame"],
+[data-testid="stDataFrame"] > div{
+ border-radius:12px!important;overflow:hidden;
+ box-shadow:var(--sigcf-shadow-sm)!important;}
+[data-testid="stDataFrame"] [data-testid="glideDataEditor"]{
+ font-family:var(--sigcf-font)!important;
+ background:var(--sigcf-card)!important;}
 #MainMenu{visibility:hidden;}
 footer{visibility:hidden;}
 [data-testid="stToolbar"]{visibility:hidden;}
 [data-testid="stDecoration"]{display:none;}
+
+/* Força verde na aba ativa — anula vermelho padrão Streamlit */
 .stTabs [data-baseweb="tab-highlight"],
 div[data-testid="stTabs"] [data-baseweb="tab-highlight"]{
  background-color:var(--sigcf-green)!important;background:var(--sigcf-green)!important;}
 .stTabs [data-baseweb="tab-list"] [role="tab"][aria-selected="true"]{
  box-shadow:inset 0 -3px 0 0 var(--sigcf-green)!important;}
-.ctx-box{background:var(--sigcf-card);border:1px solid var(--sigcf-border);border-radius:12px;padding:14px 16px;margin-bottom:12px;}
+.ctx-box{background:var(--sigcf-card);border:1px solid var(--sigcf-border);border-radius:14px;
+ padding:14px 16px;margin-bottom:12px;box-shadow:var(--sigcf-shadow-sm);}
+
+div[data-testid="stCheckbox"] label span{color:var(--sigcf-text)!important;}
+
 """
 
 
 def inject_theme(extra_css: str = "") -> None:
-    st.markdown(f"<style>{SIGCF_THEME_CSS}{extra_css or ''}</style>", unsafe_allow_html=True)
+    font = "@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');"
+    st.markdown(f"<style>{font}{SIGCF_THEME_CSS}{extra_css or ''}</style>", unsafe_allow_html=True)
 
 
 def render_header(
@@ -218,26 +284,14 @@ def dark_table(df, height: int = 320) -> None:
         st.info("Nenhum registro.")
         return
     rows = "".join(
-        "<tr>"
-        + "".join(
-            f'<td style="padding:6px 10px;border-bottom:1px solid #2a4030;'
-            f'color:#e8edd0;font-size:12px;white-space:nowrap;">{v}</td>'
-            for v in row
-        )
-        + "</tr>"
+        "<tr>" + "".join(f"<td>{v}</td>" for v in row) + "</tr>"
         for _, row in df.iterrows()
     )
-    headers = "".join(
-        f'<th style="padding:7px 10px;background:#1a2818;color:#ffd966;font-size:10px;'
-        f"font-weight:700;text-transform:uppercase;letter-spacing:1px;"
-        f'border-bottom:2px solid #2a4030;white-space:nowrap;">{c}</th>'
-        for c in df.columns
-    )
+    headers = "".join(f"<th>{c}</th>" for c in df.columns)
     st.markdown(
-        f'<div class="sigcf-table-wrap" style="overflow-x:auto;">'
-        f'<div style="max-height:{height}px;overflow-y:auto;">'
-        f'<table style="width:100%;border-collapse:collapse;background:#0f1f12;'
-        f'font-family:Segoe UI,sans-serif;"><thead><tr>{headers}</tr></thead>'
+        f'<div class="sigcf-table-wrap sigcf-table-scroll" style="overflow-x:auto;">'
+        f'<div class="sigcf-table-scroll" style="max-height:{height}px;overflow-y:auto;">'
+        f"<table><thead><tr>{headers}</tr></thead>"
         f"<tbody>{rows}</tbody></table></div></div>",
         unsafe_allow_html=True,
     )
